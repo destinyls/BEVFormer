@@ -76,7 +76,7 @@ class BEVFormer(MVXTwoStageDetector):
             #     img_meta.update(input_shape=input_shape)
 
             if img.dim() == 5 and img.size(0) == 1:
-                img.squeeze_()
+                img.squeeze_(0)
             elif img.dim() == 5 and img.size(0) > 1:
                 B, N, C, H, W = img.size()
                 img = img.reshape(B * N, C, H, W)
@@ -218,7 +218,7 @@ class BEVFormer(MVXTwoStageDetector):
         img = img[:, -1, ...]
 
         prev_img_metas = copy.deepcopy(img_metas)
-        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
+        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas) if len_queue > 1 else None
 
         img_metas = [each[len_queue-1] for each in img_metas]
         img_feats = self.extract_feat(img=img, img_metas=img_metas)

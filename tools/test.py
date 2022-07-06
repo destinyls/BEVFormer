@@ -238,12 +238,14 @@ def main():
         if args.out:
             print(f'\nwriting results to {args.out}')
             assert False
-            #mmcv.dump(outputs['bbox_results'], args.out)
+            # mmcv.dump(outputs['bbox_results'], args.out)
         kwargs = {} if args.eval_options is None else args.eval_options
         kwargs['jsonfile_prefix'] = osp.join('test', args.config.split(
             '/')[-1].split('.')[-2], time.ctime().replace(' ', '_').replace(':', '_'))
+        '''
         if args.format_only:
             dataset.format_results(outputs, **kwargs)
+        '''
 
         if args.eval:
             eval_kwargs = cfg.get('evaluation', {}).copy()
@@ -254,8 +256,9 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
+            result_files, _ = dataset.format_results(outputs, eval_kwargs["jsonfile_prefix"])
 
-            print(dataset.evaluate(outputs, **eval_kwargs))
+            # print(dataset.evaluate(outputs, **eval_kwargs))
 
 
 if __name__ == '__main__':

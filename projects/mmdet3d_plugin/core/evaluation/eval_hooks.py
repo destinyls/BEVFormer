@@ -4,6 +4,7 @@
 # inherit EvalHook but BaseDistEvalHook.
 
 import bisect
+import os
 import os.path as osp
 
 import mmcv
@@ -13,6 +14,7 @@ from mmcv.runner import EvalHook as BaseEvalHook
 from torch.nn.modules.batchnorm import _BatchNorm
 from mmdet.core.evaluation.eval_hooks import DistEvalHook
 
+from tools.v2x.evaluation.result2kitti import kitti_evaluation, result2kitti
 
 def _calc_dynamic_intervals(start_interval, dynamic_interval_list):
     assert mmcv.is_list_of(dynamic_interval_list, tuple)
@@ -83,9 +85,14 @@ class CustomDistEvalHook(BaseDistEvalHook):
         if runner.rank == 0:
             print('\n')
             runner.log_buffer.output['eval_iter_num'] = len(self.dataloader)
-
-            key_score = self.evaluate(runner, results)
-
+            results_path = "work_dirs"
+            result_files, _ = self.dataloader.dataset.format_results(results, jsonfile_prefix=results_path)
+            
+            root = "/root"
+            dair_root = os.path.join(root, "DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side")
+            gt_label_path = os.path.join(dair_root, "training", "label_2")
+            pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
+            kitti_evaluation(pred_label_path, gt_label_path)
             if self.save_best:
-                self._save_ckpt(runner, key_score)
+                self._save_ckpt(runner, 0.002)
   
