@@ -3,7 +3,7 @@ import json
 import os
 
 from torch.utils.data import Dataset
-from v2x.v2x_utils import get_trans
+from tools.v2x.v2x_utils import get_trans
 from .dataset_utils import load_json
 
 

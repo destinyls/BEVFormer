@@ -4,15 +4,16 @@
 #  Modified by Lei Yang
 # ---------------------------------------------
 import os
+import argparse
 import mmcv
 
 import numpy as np
 
 from tqdm import tqdm
-from v2x.dataset import SUPPROTED_DATASETS
-from v2x.v2x_utils import range2box, id_to_str, Evaluator
-from v2x.v2x_utils.vis_utils import *
-from v2x.v2x_utils.kitti_utils import *
+from tools.v2x.dataset import SUPPROTED_DATASETS
+from tools.v2x.v2x_utils import range2box, id_to_str, Evaluator
+from tools.v2x.v2x_utils.vis_utils import *
+from tools.v2x.v2x_utils.kitti_utils import *
 
 from scipy.spatial.transform import Rotation as R
 
@@ -36,6 +37,28 @@ superclass = {
     2: "car",
     3: "ignore",
 }
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Data converter arg parser')
+    parser.add_argument(
+        '--data-root',
+        type=str,
+        default='./data/dair-v2x',
+        help='specify the root path of dataset')
+    parser.add_argument(
+        '--out-dir',
+        type=str,
+        default='./data/dair-v2x',
+        required=False,
+        help='path to save the exported json')
+    parser.add_argument(
+        '--split-data',
+        type=str,
+        default='./tools/data/cooperative-split-data.json',
+        required=False,
+        help='path to split data')
+    args = parser.parse_args()
+    return args
 
 def get_cam2lidar(root_path, calib_virtuallidar_to_camera_path):
     calib_lidar2cam_path = calib_virtuallidar_to_camera_path
@@ -64,10 +87,14 @@ def get_annos(root_path, label_camera_std_path):
     for ori in oris:
         if "rotation" not in ori.keys():
             ori["rotation"] = 0.0
-        dim = [float(ori["3d_dimensions"]["w"]), float(ori["3d_dimensions"]["h"]), float(ori["3d_dimensions"]["l"])]
+        dim = [float(ori["3d_dimensions"]["l"]), float(ori["3d_dimensions"]["w"]), float(ori["3d_dimensions"]["h"])]
         loc = [float(ori["3d_location"]["x"]), float(ori["3d_location"]["y"]), float(ori["3d_location"]["z"])]
         box2d = [float(ori["2d_box"]["xmin"]), float(ori["2d_box"]["ymin"]), float(ori["2d_box"]["xmax"]), float(ori["2d_box"]["ymax"])]
         rotation = float(ori["rotation"])
+        if rotation > np.pi:
+            rotation -= np.pi
+        elif rotation < -np.pi:
+            rotation += np.pi
         name = ori["type"]
         truncated_state = int(ori["truncated_state"])
         occluded_state = int(ori["occluded_state"])
@@ -254,10 +281,10 @@ def _fill_trainval_infos(root_path,
     val_dair_infos = fill_infos(root_path, dair_val, max_sweeps)
     return train_dair_infos, val_dair_infos
         
-if __name__ == "__main__":
-    root_path = "/home/yanglei/DataSets/DAIR-V2X/cooperative-vehicle-infrastructure"
-    out_path = "/home/yanglei/DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side"
-    split_data_path = "v2x/cooperative-split-data.json" 
+if __name__ == "__main__":   
+    args = parse_args()
+    data_root, out_dir, split_data = args.data_root, args.out_dir, args.split_data
+    
     box_range = np.array([-10, -49.68, -3, 79.12, 49.68, 1])
     indexs = [
         [0, 1, 2],
@@ -270,5 +297,4 @@ if __name__ == "__main__":
         [0, 4, 5],
     ]
     extended_range = np.array([[box_range[index] for index in indexs]])
-
-    create_dair_infos(root_path, out_path, split_data_path, extended_range=extended_range)
+    create_dair_infos(data_root, out_dir, split_data, extended_range=None)

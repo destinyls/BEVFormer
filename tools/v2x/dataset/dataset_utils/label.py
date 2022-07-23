@@ -1,8 +1,8 @@
 import numpy as np
 
-from v2x.v2x_utils import get_3d_8points
-from v2x.dataset.dataset_utils import load_json
-from v2x.config import name2id
+from tools.v2x.v2x_utils import get_3d_8points
+from tools.v2x.dataset.dataset_utils import load_json
+from tools.v2x.config import name2id
 
 
 class Label(dict):
@@ -24,9 +24,10 @@ class Label(dict):
                     [float(pos["x"]), float(pos["y"]), float(pos["z"]) - float(size["h"]) / 2],
                 ).tolist()
             # determine if box is in extended range
-            if filt is None or filt(box):
+            if True:
                 boxes.append(box)
                 class_types.append(name2id[label["type"].lower()])
+            
         boxes = np.array(boxes)
         class_types = np.array(class_types)
         # if len(class_types) == 1:

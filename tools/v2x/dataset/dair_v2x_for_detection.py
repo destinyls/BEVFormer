@@ -6,8 +6,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .base_dataset import DAIRV2XDataset, get_annos, build_path_to_info
-from v2x.dataset.dataset_utils import load_json, InfFrame, VehFrame, VICFrame, Label
-from v2x.v2x_utils import Filter, RectFilter, id_cmp, id_to_str, get_trans, box_translation
+from tools.v2x.dataset.dataset_utils import load_json, InfFrame, VehFrame, VICFrame, Label
+from tools.v2x.v2x_utils import Filter, RectFilter, id_cmp, id_to_str, get_trans, box_translation
 
 class DAIRV2XI(DAIRV2XDataset):
     def __init__(self, path, split_data_path, split="train", sensortype="lidar", extended_range=None):
@@ -28,7 +28,7 @@ class DAIRV2XI(DAIRV2XDataset):
         self.data = []
         for elem in tqdm(data_infos):
             gt_label = {}
-            filt = RectFilter(extended_range[0]) if extended_range is not None else Filter()
+            filt = RectFilter(extended_range[0]) if extended_range is not None else None
             gt_label["camera"] = Label(osp.join(path, "infrastructure-side", elem["label_camera_std_path"]), filt)
             gt_label["lidar"] = Label(osp.join(path, "infrastructure-side", elem["label_lidar_std_path"]), filt)
 
@@ -115,7 +115,7 @@ class DAIRV2XI(DAIRV2XDataset):
     def cur_inf_frame(self, token):
         cur = self.inf_path2info[token]
         gt_label = {}
-        filt = RectFilter(self.extended_range[0]) if self.extended_range is not None else Filter()
+        filt = RectFilter(self.extended_range[0]) if self.extended_range is not None else None
         gt_label["camera"] = Label(osp.join(self.path, "infrastructure-side", cur["label_camera_std_path"]), filt)
         gt_label["lidar"] = Label(osp.join(self.path, "infrastructure-side", cur["label_lidar_std_path"]), filt)
         return (InfFrame(self.path, cur), gt_label)  
