@@ -8,6 +8,7 @@ from tkinter.messagebox import NO
 import torch
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
+from mmdet3d.models import builder
 from mmdet3d.core import bbox3d2result
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
@@ -35,6 +36,7 @@ class BEVFormer(MVXTwoStageDetector):
                  pts_backbone=None,
                  img_neck=None,
                  pts_neck=None,
+                 height_net=None,
                  pts_bbox_head=None,
                  img_roi_head=None,
                  img_rpn_head=None,
@@ -54,6 +56,8 @@ class BEVFormer(MVXTwoStageDetector):
             True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7)
         self.use_grid_mask = use_grid_mask
         self.fp16_enabled = False
+        if height_net is not None:
+            self.height_net = builder.build_neck(height_net)
 
         # temporal
         self.video_test_mode = video_test_mode
@@ -222,12 +226,15 @@ class BEVFormer(MVXTwoStageDetector):
 
         img_metas = [each[len_queue-1] for each in img_metas]
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
+
+        # img_feats, depth_loss = self.height_net(img_feats, img_metas, is_train=True)
         losses = dict()
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore, prev_bev)
 
         losses.update(losses_pts)
+        # losses.update({"depth_loss": depth_loss})
         return losses
 
     def forward_test(self, img_metas, img=None, **kwargs):
@@ -280,7 +287,8 @@ class BEVFormer(MVXTwoStageDetector):
     def simple_test(self, img_metas, img=None, prev_bev=None, rescale=False):
         """Test function without augmentaiton."""
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
-
+        # img_feats = self.height_net(img_feats, img_metas, is_train=False)
+        
         bbox_list = [dict() for i in range(len(img_metas))]
         new_prev_bev, bbox_pts = self.simple_test_pts(
             img_feats, img_metas, prev_bev, rescale=rescale)
