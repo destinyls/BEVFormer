@@ -87,12 +87,12 @@ class CustomDistEvalHook(BaseDistEvalHook):
             runner.log_buffer.output['eval_iter_num'] = len(self.dataloader)
             results_path = "work_dirs"
             result_files, _ = self.dataloader.dataset.format_results(results, jsonfile_prefix=results_path)
-            
-            root = "/root"
-            dair_root = os.path.join(root, "DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side")
-            gt_label_path = os.path.join(dair_root, "training", "label_2")
+            result_files = result_files["pts_bbox"]
+
+            dair_root = "data/dair-v2x"
+            gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")            
             pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
             kitti_evaluation(pred_label_path, gt_label_path)
-            if self.save_best:
-                self._save_ckpt(runner, 0.002)
+            #if self.save_best:
+                # self._save_ckpt(runner, 0.002)
   

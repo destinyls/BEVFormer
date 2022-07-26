@@ -59,6 +59,16 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=4,
         relu_before_extra_convs=True),
+    height_net=dict(
+        type='HeightNet',
+        in_channels=_dim_,
+        in_strides=[16,],
+        out_channels=_dim_,
+        embed_dims=_dim_,
+        min_height=-3.0,
+        max_height=4.0,
+        num_bins=7,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,

@@ -19,7 +19,6 @@ def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
     pred_annos, image_ids = kitti.get_label_annos(pred_label_path, return_ids=True)
     gt_annos = kitti.get_label_annos(gt_label_path, image_ids=image_ids)
     result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist"], metric="R40")
-    # result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist"])
     mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
     os.makedirs(os.path.join(metric_path, "R40"), exist_ok=True)
     with open(os.path.join(metric_path, "R40", 'epoch_result_{}.txt'.format(round(mAP_3d_moderate, 2))), "w") as f:
@@ -147,7 +146,8 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             detection_score = pred["detection_score"]
             class_name = pred["detection_name"]
             
-            w, h, l = dim[0], dim[1], dim[2]
+            # w, h, l = dim[0], dim[1], dim[2]
+            l, w, h = dim[0], dim[1], dim[2]
             x, y, z = loc[0], loc[1], loc[2]            
             bottom_center = [x, y, z]
             obj_size = [l, w, h]
@@ -186,14 +186,15 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
             pcd_vis(pcd_path, bboxes, demo_file, label_path)
 
-        return os.path.join(results_path, "data")
+    return os.path.join(results_path, "data")
 
 if __name__ == "__main__":
+    
     root = "/root"
     dair_root = os.path.join(root, "DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side")    
     results_path = os.path.join(root, "BEVFormer/test/bevformer_small_dair_v2x")
     results_file = os.path.join(results_path, "Mon_Jul__4_21_44_10_2022/pts_bbox/results_nusc.json")
     # result2kitti(results_file, results_path, dair_root, demo=True)
-    pred_label_path = os.path.join(results_path, "data")
-    gt_label_path = os.path.join(root, "DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side-kitti/training/label_2")
-    kitti_evaluation(pred_label_path, gt_label_path)
+    # pred_label_path = os.path.join(results_path, "data")
+    # gt_label_path = os.path.join(root, "DataSets/DAIR-V2X/cooperative-vehicle-infrastructure/infrastructure-side-kitti/training/label_2")
+    # kitti_evaluation(pred_label_path, gt_label_path)

@@ -2,7 +2,10 @@ import math
 import cv2
 import numpy as np
 from numpy import random
+
+import torch
 import mmcv
+
 from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
 
@@ -322,7 +325,6 @@ class RandomScaleImageMultiViewImage(object):
 
         return results
 
-
     def __repr__(self):
         repr_str = self.__class__.__name__
         repr_str += f'(size={self.scales}, '
@@ -330,7 +332,6 @@ class RandomScaleImageMultiViewImage(object):
     
 @PIPELINES.register_module()
 class ProduceHeightMap(object):
-    
     def __init__(self, resolution=[], back_ratio=[]):
         self.resolution = resolution
         self.back_ratio = back_ratio
@@ -338,37 +339,25 @@ class ProduceHeightMap(object):
         assert len(self.back_ratio)==1
 
     def __call__(self, results):
-        results['height_map'] = [np.zeros((img.shape[0], img.shape[1])) for idx, img in enumerate(results['img'])]
-        results['height_mask'] = [np.random.rand(img.shape[0], img.shape[1]) < self.back_ratio for idx, img in enumerate(results['img'])]
-        
+        height_map = [np.zeros((img.shape[0], img.shape[1])) for idx, img in enumerate(results['img'])]
+
         y_size = [int(img.shape[0]) for img in results['img']]
         x_size = [int(img.shape[1]) for img in results['img']]
-        gt_bboxes_3d  = results["gt_bboxes_3d"].tensor.numpy()
-        surface_points_list = []
-        for idx in range(gt_bboxes_3d.shape[0]):
-            gt_bbox = gt_bboxes_3d[idx]
-            lwh = gt_bbox[3:6]
-            center_lidar = gt_bbox[:3]
-            center_lidar[2] += 0.5 * lwh[2]
-            yaw_lidar = gt_bbox[6]
-            
-            surface_points = self.box3d_surface(lwh, center_lidar, -yaw_lidar)   
-            surface_points_list.append(surface_points)
+        gt_bboxes_3d  = torch.clone(results["gt_bboxes_3d"].tensor).numpy()
         
-            corner_points = get_lidar_3d_8points([lwh[1], lwh[0], lwh[2]], -yaw_lidar, center_lidar)
-            lidar2img = results["lidar2img"][0]
-            corners_3d_img = np.matmul(lidar2img, np.concatenate((corner_points, np.ones((corner_points.shape[0],1))), axis=1).T).T            
-            corners_3d_img = corners_3d_img[:,:2] / (corners_3d_img[:,2] + 10e-6)
-            corners_3d_img = corners_3d_img.astype(np.int32)
-            corners_3d_img[:,0] = np.clip(corners_3d_img[:,0], 0, x_size[0]-2)
-            corners_3d_img[:,1] = np.clip(corners_3d_img[:,1], 0, y_size[0]-2)
-            bbox = np.array([np.min(corners_3d_img[:,0]), np.min(corners_3d_img[:,1]),
-                             np.max(corners_3d_img[:,0]), np.max(corners_3d_img[:,1])])
-            results['height_mask'][0][bbox[1]:bbox[3], bbox[0]:bbox[2]] = False
-        
-        surface_points = np.vstack(surface_points_list)
-        for idx in range(len(results['height_map'])):            
+        for idx in range(len(height_map)):
             lidar2img = results["lidar2img"][idx]
+            lidar2cam = results["lidar2cam"][idx]
+            surface_points_list = []
+            for obj_id in range(gt_bboxes_3d.shape[0]):
+                gt_bbox = gt_bboxes_3d[obj_id]
+                lwh = gt_bbox[3:6]
+                center_lidar = gt_bbox[:3] + [0.0, 0.0, 0.5 * lwh[2]]
+                yaw_lidar = gt_bbox[6]
+                surface_points = self.box3d_surface(lwh, center_lidar, -yaw_lidar, lidar2cam)   
+                surface_points_list.append(surface_points)
+            surface_points = np.vstack(surface_points_list)   
+            
             surface_points_img = np.matmul(lidar2img, np.concatenate((surface_points, np.ones((surface_points.shape[0],1))), axis=1).T).T
             surface_points_img = surface_points_img[:,:2] / (surface_points_img[:,2] + 10e-6)[:, np.newaxis]
             surface_points_img = surface_points_img.astype(np.int32)
@@ -376,12 +365,10 @@ class ProduceHeightMap(object):
             surface_points_img[:,1] = np.clip(surface_points_img[:,1], 0, y_size[idx]-1)
             
             height = surface_points[:, 2]
-            results['height_map'][idx][surface_points_img[:,1], surface_points_img[:,0]] = height
-            results['height_mask'][idx][surface_points_img[:,1], surface_points_img[:,0]] = True
+            height_map[idx][surface_points_img[:,1], surface_points_img[:,0]] = height
             
-        # cv2.imwrite("height_map.jpg", results['height_map'][idx] * 255)
-        # cv2.imwrite("height_mask.jpg", results['height_mask'][idx] * 255)
-            
+        # cv2.imwrite("height_map.jpg", height_map[idx] * 255)        
+        results['height_map'] = height_map
         return results
     
     def local2global(self, points, center_lidar, yaw_lidar):
@@ -392,10 +379,15 @@ class ProduceHeightMap(object):
         points_3d_lidar = np.matmul(rot_mat, points_3d_lidar.T).T + center_lidar
         return points_3d_lidar
     
+    def global2cam(self, points, lidar2cam):
+        points = np.concatenate((points[:, :3], np.ones((points.shape[0], 1))), axis=1)
+        points = np.matmul(lidar2cam, points.T).T
+        return points[:, :3]
+    
     def distance(self, point):
         return np.sqrt(point[0]**2 + point[1]**2 + point[2]**2)
     
-    def box3d_surface(self, lwh, center_lidar, yaw_lidar):
+    def box3d_surface(self, lwh, center_lidar, yaw_lidar, lidar2cam):
         l, w, h = lwh[0], lwh[1], lwh[2]
         surface_points = []
         # top
@@ -412,12 +404,13 @@ class ProduceHeightMap(object):
         xv, zv = np.meshgrid(x, z, sparse=False)    
         xyz = np.concatenate((0.5 * np.ones_like(xv)[:,:,np.newaxis] * w / self.resolution, xv[:,:,np.newaxis], zv[:,:,np.newaxis]), axis=-1)
         points_left = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
-        points_left_mean = self.local2global(np.array([0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)[0]
+        points_left_mean = self.local2global(np.array([0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)
+        points_left_mean = self.global2cam(points_left_mean, lidar2cam)[0]
         # right
         xyz = np.concatenate((-0.5 * np.ones_like(xv)[:,:,np.newaxis] * w / self.resolution, xv[:,:,np.newaxis], zv[:,:,np.newaxis]), axis=-1)
         points_right = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
-        points_right_mean = self.local2global(np.array([-0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)[0]
-        
+        points_right_mean = self.local2global(np.array([-0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)
+        points_right_mean = self.global2cam(points_right_mean, lidar2cam)[0]
         # front
         shape_front = np.array([h / self.resolution, w / self.resolution]).astype(np.int32)
         n, m = [(ss - 1.) / 2. for ss in shape_front]
@@ -425,11 +418,13 @@ class ProduceHeightMap(object):
         yv, zv = np.meshgrid(y, z, sparse=False)
         xyz = np.concatenate((yv[:,:,np.newaxis], -0.5 * np.ones_like(yv)[:,:,np.newaxis] * l / self.resolution, zv[:,:,np.newaxis]), axis=-1)
         points_front = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
-        points_front_mean = self.local2global(np.array([0.0, -0.5 * l, 0.0]), center_lidar, yaw_lidar)[0]
+        points_front_mean = self.local2global(np.array([0.0, -0.5 * l, 0.0]), center_lidar, yaw_lidar)
+        points_front_mean = self.global2cam(points_front_mean, lidar2cam)[0]
         # rear
         xyz = np.concatenate((yv[:,:,np.newaxis], 0.5 * np.ones_like(yv)[:,:,np.newaxis] * l / self.resolution, zv[:,:,np.newaxis]), axis=-1)
         points_rear = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
-        points_rear_mean = self.local2global(np.array([0.0, 0.5 * l, 0.0]), center_lidar, yaw_lidar)[0]
+        points_rear_mean = self.local2global(np.array([0.0, 0.5 * l, 0.0]), center_lidar, yaw_lidar)
+        points_rear_mean = self.global2cam(points_rear_mean, lidar2cam)[0]
         surface_points.append(points_top)
         if self.distance(points_left_mean) < self.distance(points_right_mean):
             surface_points.append(points_left)
