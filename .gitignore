@@ -136,4 +136,5 @@ dmypy.json
 .pyre/
 metric/
 metric_001/
+debug/
 nohup.out

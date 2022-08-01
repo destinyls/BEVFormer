@@ -335,7 +335,8 @@ class ProduceHeightMap(object):
         self.back_ratio = back_ratio
         assert len(self.resolution)==1
         assert len(self.back_ratio)==1
-
+        self.image_reatify = ImageReactify(target_roll=[0.0,], target_pitch=[13.0])
+        
     def __call__(self, results):
         height_map = [np.zeros((img.shape[0], img.shape[1])) for idx, img in enumerate(results['img'])]
         images = [img for idx, img in enumerate(results['img'])]
@@ -365,8 +366,11 @@ class ProduceHeightMap(object):
             
             height = surface_points[:, 2]
             height_map[idx][surface_points_img[:,1], surface_points_img[:,0]] = height
+            '''
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
-        cv2.imwrite(os.path.join("debug", str(results["frame_idx"]) + ".jpg"), images[0])
+            roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
+            '''
+        # cv2.imwrite(os.path.join("debug", str(results["frame_idx"]) + "_" + str(round(roll, 2)) + ".jpg"), images[0])
         results['height_map'] = height_map
         return results
     
@@ -473,8 +477,9 @@ class ImageReactify(object):
         target_vector_yz = target_vector_yz / np.sqrt(target_vector_yz[0]**2 + target_vector_yz[1]**2 + target_vector_yz[2]**2)       
         roll = math.acos(np.inner(origin_vector, target_vector_xy))
         pitch = math.acos(np.inner(origin_vector, target_vector_yz))
-        
-        return self.rad2degree(roll), self.rad2degree(pitch)
+        roll = -1 * self.rad2degree(roll) if target_vector_xy[0] > 0 else self.rad2degree(roll)
+        pitch = -1 * self.rad2degree(pitch) if target_vector_yz[1] > 0 else self.rad2degree(pitch)
+        return roll, pitch
     
     def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,]):
         if len(target_roll) > 1:
@@ -489,16 +494,8 @@ class ImageReactify(object):
                                  [0, 0, 1, 0],
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
-        roll_check, _ = self.parse_roll_pitch(lidar2cam_rectify)
-        if roll_check != target_roll_status:
-            roll_rad = -1 * self.degree2rad(roll)
-            rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
-                                    [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
-                                    [0, 0, 1, 0],
-                                    [0, 0, 0, 1]])
-            lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
+
         lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
-        
         h, w, _ = image.shape
         center = (w // 2, h // 2)        
         M = cv2.getRotationMatrix2D(center, -1 * self.rad2degree(roll_rad), 1.0)
@@ -534,22 +531,12 @@ class ImageReactify(object):
             image = results["img"][idx].copy()
             roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
             lidar2cam_roll_rectify, lidar2img_roll_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
-            roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_roll_rectify)
-            flag = False
-            if len(self.target_roll) > 1:
-                if roll_check > self.target_roll[1] or roll_check < self.target_roll[0]:
-                    print("roll exceed ...", roll_check)
-                    flag = True
-                    image = results["img"][idx].copy()
-                    lidar2cam_roll_rectify = results["lidar2cam"][idx].copy()
             '''
             lidar2cam_pitch_rectify, lidar2img_pitch_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, target_pitch=self.target_pitch)            
             M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
             image = self.transform_with_M(image, M)
             roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_pitch_rectify)
             '''
-            if flag:
-                print("filtered roll: ", roll_check)
             '''
             roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_roll_rectify)
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -562,12 +549,12 @@ class ImageReactify(object):
                     fontScale, color, thickness, cv2.LINE_AA)
             image = cv2.putText(image, str(round(roll_init, 2)) +" " + str(round(pitch_init ,2)), org_1, font, 
                     fontScale, color, thickness, cv2.LINE_AA)
-
+            '''
             results["lidar2cam"][idx] = lidar2cam_roll_rectify
             results["cam_intrinsic"][idx] = cam_intrinsic
             results["lidar2img"][idx] = lidar2img_roll_rectify
             results["img"][idx] = image
-            '''         
+              
         return results
     
     def get_M(self, R, K, R_r, K_r):

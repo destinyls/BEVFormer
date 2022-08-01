@@ -182,14 +182,14 @@ train_pipeline = [
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.8]),
     dict(type='PadMultiViewImage', size_divisor=32),
-    dict(type='ProduceHeightMap', resolution=[0.04], back_ratio=[0.05]),
+    # dict(type='ProduceHeightMap', resolution=[0.04], back_ratio=[0.05]),  # need to del
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img'])
 ]
 
 test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
-    dict(type='ImageReactify', target_roll=0.0, target_pitch=13.0),
+    dict(type='ImageReactify', target_roll=[0,], target_pitch=[13.0,]),  # if need to del
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     # dict(type='PadMultiViewImage', size_divisor=32),
     dict(
