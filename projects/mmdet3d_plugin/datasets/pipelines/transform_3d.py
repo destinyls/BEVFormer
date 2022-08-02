@@ -1,3 +1,4 @@
+from email.mime import image
 import math
 import cv2
 import numpy as np
@@ -294,7 +295,6 @@ class RandomScaleImageMultiViewImage(object):
     Args:
         scales
     """
-
     def __init__(self, scales=[]):
         self.scales = scales
         assert len(self.scales)==1
@@ -366,7 +366,7 @@ class ProduceHeightMap(object):
             
             height = surface_points[:, 2]
             height_map[idx][surface_points_img[:,1], surface_points_img[:,0]] = height
-            '''
+            ''' 
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
             roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
             '''
@@ -508,8 +508,8 @@ class ImageReactify(object):
         else:
             target_pitch_status = target_pitch[0]
 
-        pitch = target_pitch_status - pitch * 180 / np.pi
-        pitch = pitch * np.pi / 180
+        pitch = target_pitch_status - self.rad2degree(pitch)
+        pitch = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch), -math.sin(pitch), 0], 
                                   [0,math.sin(pitch), math.cos(pitch), 0],
@@ -601,3 +601,72 @@ class ImageReactify(object):
         
         return image_new
     
+@PIPELINES.register_module()
+class ImageRangeFilter(object):
+    """Filter objects outside image view.
+    Args:
+        bool object center or eight corners.
+    """
+    def __init__(self, use_center=False):
+        self.use_center = use_center
+
+    def __call__(self, results):
+        """Call function to filter objects by the range.
+        Args:
+            input_dict (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Results after filtering, 'gt_bboxes_3d', 'gt_labels_3d' \
+                keys are updated in the result dict.
+        """
+        gt_bboxes_3d = results['gt_bboxes_3d']
+        gt_labels_3d = results['gt_labels_3d']
+        
+        image = results["img"][0]
+        lidar2img = results["lidar2img"][0]
+        gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
+        if gt_bboxes_3d_np.shape[0] == 0:
+            return results
+        indices = []
+        for obj_id in range(gt_bboxes_3d_np.shape[0]):
+            gt_bbox = gt_bboxes_3d_np[obj_id]
+            yaw_lidar = gt_bbox[6]
+            lwh = gt_bbox[3:6]
+            center_lidar = gt_bbox[:3] + [0.0, 0.0, 0.5 * lwh[2]]
+            if self.use_center:
+                # center-based filter
+                center_lidar = np.array(center_lidar)[:, np.newaxis]
+                center_lidar_extend = np.concatenate((center_lidar, np.ones((1, 1))), axis=0)
+                center_img = np.matmul(lidar2img, center_lidar_extend).T
+                center_img_uv = center_img[0, :2] / center_img[0, 2]
+                if center_img_uv[0] > 0 and center_img_uv[0] < image.shape[1] - 1 and center_img_uv[1] > 0 and center_img_uv[1] < image.shape[0] - 1:
+                    indices.append(True)
+                else:
+                    indices.append(False)
+            else:
+                # corner-based filter
+                bottom_center = gt_bbox[:3]
+                lidar_8_points = compute_box_3d(lwh, bottom_center, yaw_lidar)
+                lidar_8_points_extend = np.concatenate((lidar_8_points, np.ones((lidar_8_points.shape[0],1))), axis=1)
+                img_8_points = np.matmul(lidar2img, lidar_8_points_extend.T).T
+                uv_8_points = img_8_points[:,:2] /img_8_points[:,2][:,np.newaxis]
+                if np.any(uv_8_points[:,0] > 0) and np.any((uv_8_points[:,0]) < image.shape[1] - 1) and np.any(uv_8_points[:,1] > 0) and np.any(uv_8_points[:,1] < image.shape[0] -1):
+                    indices.append(True)
+                else:
+                    indices.append(False)
+        mask = torch.tensor(np.array(indices), device=gt_bboxes_3d.tensor.device)
+        gt_bboxes_3d = gt_bboxes_3d[mask]        
+        # mask is a torch tensor but gt_labels_3d is still numpy array
+        # using mask to index gt_labels_3d will cause bug when
+        # len(gt_labels_3d) == 1, where mask=1 will be interpreted
+        # as gt_labels_3d[1] and cause out of index error
+        gt_labels_3d = gt_labels_3d[mask.numpy().astype(np.bool)]
+        results['gt_bboxes_3d'] = gt_bboxes_3d
+        results['gt_labels_3d'] = gt_labels_3d
+        return results
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        repr_str += f'(point_cloud_range={self.pcd_range.tolist()})'
+        return repr_str
