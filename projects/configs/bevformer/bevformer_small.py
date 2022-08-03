@@ -62,11 +62,15 @@ model = dict(
     img_neck=dict(
         type='FPN',
         in_channels=[2048],
-        out_channels=_dim_,
+        out_channels=192,
         start_level=0,
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    ray_embeds=dict(
+        type='RayEmbeds',
+        embed_dims=_dim_,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,

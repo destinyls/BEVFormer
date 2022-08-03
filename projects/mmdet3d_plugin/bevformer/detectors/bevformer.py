@@ -37,6 +37,7 @@ class BEVFormer(MVXTwoStageDetector):
                  img_neck=None,
                  pts_neck=None,
                  height_net=None,
+                 ray_embeds=None,
                  pts_bbox_head=None,
                  img_roi_head=None,
                  img_rpn_head=None,
@@ -56,10 +57,16 @@ class BEVFormer(MVXTwoStageDetector):
             True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7)
         self.use_grid_mask = use_grid_mask
         self.fp16_enabled = False
+        
         self.enable_height = False
         if height_net is not None:
             self.height_net = builder.build_neck(height_net)
             self.enable_height = True
+        
+        self.enable_ray_embeds = False
+        if ray_embeds is not None:
+            self.ray_embeds = builder.build_neck(ray_embeds)
+            self.enable_ray_embeds = True
 
         # temporal
         self.video_test_mode = video_test_mode
@@ -111,6 +118,8 @@ class BEVFormer(MVXTwoStageDetector):
         """Extract features from images and points."""
 
         img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
+        if self.enable_ray_embeds:
+            img_feats = self.ray_embeds(img_feats, img_metas)
         
         return img_feats
 
