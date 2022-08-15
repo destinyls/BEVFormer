@@ -17,7 +17,7 @@ class RayEmbeds(nn.Module):
                  ):
         super().__init__()
         self.embed_dims = embed_dims
-        self.ray_dims = embed_dims // 4
+        self.ray_dims = embed_dims
                 
         self.ray_mlp = nn.Sequential(
             nn.Conv2d(6,
@@ -58,18 +58,20 @@ class RayEmbeds(nn.Module):
         return ground_locs
     
     def generate_locs(self, P, denorm, point2d):
-        locs = self.decode_location(P, point2d, 100).T
+        locs = self.decode_location(P, point2d, 3).T
         return locs
-    
     
     def locs2rk_matrix(self, ground_locs, lidar2cam, ft_shape):
         T = lidar2cam[:3, 3]
-        cam2lidar = np.linalg.inv(lidar2cam)
-        ground_locs_extend = np.concatenate((ground_locs, np.ones((ground_locs.shape[0], 1))), axis=1)
-        ground_locs_lidar = np.matmul(cam2lidar, ground_locs_extend.T).T
-        locs_map = ground_locs_lidar[:, :3].reshape(ft_shape[0], ft_shape[1], 3)
+        R = lidar2cam[:3,:3]
+        R_inv = np.linalg.inv(R)
+        ground_locs = np.matmul(R_inv, ground_locs.T).T
+        ground_locs_norm = np.linalg.norm(ground_locs, ord=2, axis=1, keepdims=True)
+        ground_locs = np.true_divide(ground_locs, ground_locs_norm)
+        locs_map = ground_locs.reshape(ft_shape[0], ft_shape[1], 3)
         locs_map = np.concatenate((locs_map, np.ones((locs_map.shape[0], locs_map.shape[1], 3))), axis=2)
         locs_map[:, :, 3:] = T
+        
         return locs_map
     
     def reweight_intrinsic(self, cam_intrinsic, scale=8/320):
@@ -131,7 +133,7 @@ class RayEmbeds(nn.Module):
             temp = []
             for n in range(N):
                 denorm = self.get_denorm(lidar2cam[b, n, ...])
-                ground_locs = self.generate_ground_locs(cam_intrinsic[b, n, ...], denorm, point2d[b, n, ...])
+                ground_locs = self.generate_locs(cam_intrinsic[b, n, ...], denorm, point2d[b, n, ...])
                 loc_map = self.locs2rk_matrix(ground_locs, lidar2cam[b, n, ...], ft_shape)
                 temp.append(loc_map)
             loc_maps.append(temp)
@@ -164,6 +166,9 @@ class RayEmbeds(nn.Module):
         ray_input = ray_input.view(B*N, -1, H, W)
         
         ray_embeds = self.ray_mlp(ray_input)
-        img_features = torch.cat((img_features, ray_embeds), dim=1).view(B, N, -1, H, W)
+        img_features = img_features + ray_embeds
+        img_features =  img_features.view(B, N, -1, H, W)
+        
+        # img_features = torch.cat((img_features, ray_embeds), dim=1).view(B, N, -1, H, W)
         
         return [img_features]

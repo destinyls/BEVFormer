@@ -62,7 +62,7 @@ model = dict(
     img_neck=dict(
         type='FPN',
         in_channels=[2048],
-        out_channels=192,
+        out_channels=_dim_,
         start_level=0,
         add_extra_convs='on_output',
         num_outs=_num_levels_,
@@ -175,19 +175,17 @@ dataset_type = 'CustomNuScenesDataset'
 data_root = 'data/dair-v2x/'
 file_client_args = dict(backend='disk')
 
-
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    dict(type='ImageReactify', target_roll=[-2,2], pitch_abs=2.0),
-    # dict(type='ImageRangeFilter', use_center=False),
+    dict(type='ImageReactify', target_roll=[-2,2], pitch_abs=None),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.8]),
     dict(type='PadMultiViewImage', size_divisor=32),
-    # dict(type='ProduceHeightMap', resolution=[0.04], back_ratio=[0.05]),  # need to del
+    # dict(type='ProduceHeightMap', resolution=0.05, back_ratio=0.05),  # need to del
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img'])
 ]
@@ -195,6 +193,7 @@ train_pipeline = [
 test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
+    # dict(type='ImageReactify', target_roll=[-2,2], pitch_abs=2.0),
     # dict(type='PadMultiViewImage', size_divisor=32),
     dict(
         type='MultiScaleFlipAug3D',
@@ -266,10 +265,10 @@ evaluation = dict(interval=1, pipeline=test_pipeline)
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 load_from = 'ckpts/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
-    interval=50,
+    interval=60,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')
     ])
 
-checkpoint_config = dict(interval=30)
+checkpoint_config = dict(interval=5)

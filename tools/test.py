@@ -24,6 +24,7 @@ from mmdet.datasets import replace_ImageToTensor
 import time
 import os.path as osp
 
+from tools.v2x.evaluation.result2kitti import kitti_evaluation, result2kitti
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -257,7 +258,13 @@ def main():
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
             result_files, _ = dataset.format_results(outputs, eval_kwargs["jsonfile_prefix"])
+            result_files = result_files["pts_bbox"]
+            results_path = "work_dirs"
 
+            dair_root = "data/dair-v2x"
+            gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")            
+            pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
+            kitti_evaluation(pred_label_path, gt_label_path)
             # print(dataset.evaluate(outputs, **eval_kwargs))
 
 
