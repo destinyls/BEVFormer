@@ -338,13 +338,13 @@ def create_data(src_root, out_dir, split='train', version="v1.0", demo=False):
                 index_list.append((img_path, index))
                 break
     
+    # index_list=random.sample(index_list, int(len(index_list) * 0.2))
     rope3d_infos = []
     for idx in tqdm(range(len(index_list))):
         img_path, index = index_list[idx]
         src_img_path = os.path.join(src_dir, "../", img_path)
         
         src_img_file = os.path.join(src_img_path, index + ".jpg")
-        src_depth_img_file = os.path.join(src_depth_img_path, index + ".jpg")
         src_label_file = os.path.join(src_label_path, index + ".txt")
         src_calib_file = os.path.join(src_calib_path, index + ".txt")
         src_denorm_file = os.path.join(src_denorm_path, index + ".txt")

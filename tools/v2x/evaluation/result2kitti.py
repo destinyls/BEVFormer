@@ -11,6 +11,8 @@ from tqdm import tqdm
 
 from tools.v2x.evaluation.kitti_utils import kitti_common as kitti
 from tools.v2x.evaluation.kitti_utils.eval import kitti_eval
+
+from tools.data_converter.rope3d_converter import *
 # from mmdet3d.core.evaluation.kitti_utils.eval import kitti_eval
 
 category_map = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Truck", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
@@ -33,24 +35,16 @@ def write_kitti_in_txt(pred_lines, path_txt):
         wf.write(line_string)
     wf.close()
 
-def get_velo2cam(sample_id, dair_root):
-    calib_file = os.path.join(dair_root, "calib", "virtuallidar_to_camera", "{:06}".format(sample_id) + ".json")
-    with open(calib_file,'r',encoding='utf8')as fp:
-        calib_velo2cam = json.load(fp)
-    r_velo2cam = np.array(calib_velo2cam["rotation"])
-    t_velo2cam = np.array(calib_velo2cam["translation"])
-    Tr_velo_to_cam = np.hstack((r_velo2cam, t_velo2cam))
+def get_velo2cam(src_denorm_file):
+    _, _, Tr_cam2lidar = get_cam2lidar(src_denorm_file)
+    Tr_velo_to_cam = np.linalg.inv(Tr_cam2lidar) 
+    r_velo2cam, t_velo2cam = Tr_velo_to_cam[:3, :3], Tr_velo_to_cam[:3, 3]
+    t_velo2cam = t_velo2cam.reshape(3, 1)
     return Tr_velo_to_cam, r_velo2cam, t_velo2cam
 
-def get_camera_intrinsic(sample_id, dair_root):
-    calib_file = os.path.join(dair_root, "calib", "camera_intrinsic", "{:06}".format(sample_id) + ".json")
-    with open(calib_file,'r',encoding='utf8')as fp:
-        camera_intrinsic = json.load(fp)
-    P2 = np.array(camera_intrinsic["cam_K"]).reshape([3, 3])
-    return P2
-
 def convert_point(point, matrix):
-    return matrix @ point
+    pos =  matrix @ point
+    return pos[0], pos[1], pos[2]
 
 def normalize_angle(angle):
     alpha_tan = np.tan(angle)
@@ -117,6 +111,7 @@ def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
     corners_3d_extend = np.concatenate(
         [corners_3d, np.ones((corners_3d.shape[0], 1), dtype=np.float32)], axis=1) 
     corners_3d_extend = np.matmul(Tr_velo_to_cam, corners_3d_extend.transpose(1, 0))
+        
     corners_2d = np.matmul(camera_intrinsic, corners_3d_extend)
     corners_2d = corners_2d[:2] / corners_2d[2]
     box2d = np.array([min(corners_2d[0]), min(corners_2d[1]),
@@ -132,10 +127,17 @@ def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
 def result2kitti(results_file, results_path, dair_root, demo=False):
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
+    with open("data/rope3d-kitti/ImageSets/val.json") as fp:
+        token2sample = json.load(fp)
     for sample_token in tqdm(results.keys()):
-        sample_id = int(sample_token.split("/")[1].split(".")[0])
-        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(sample_id, dair_root)
-        camera_intrinsic = get_camera_intrinsic(sample_id, dair_root)
+        sample_id = int(token2sample[sample_token])
+
+        src_denorm_file = os.path.join(dair_root, "validation/denorm", sample_token + ".txt")
+        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
+        src_calib_file = os.path.join(dair_root, "validation/calib", sample_token + ".txt")
+        camera_intrinsic = get_cam_intrinsic(src_calib_file)
+        camera_intrinsic = np.concatenate([camera_intrinsic, np.zeros((camera_intrinsic.shape[0], 1))], axis=1)
+        
         preds = results[sample_token]
         pred_lines = []
         bboxes = []

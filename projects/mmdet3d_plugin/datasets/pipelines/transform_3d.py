@@ -370,9 +370,12 @@ class ProduceHeightMap(object):
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
             roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
 
-        frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
-        cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
-        cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
+        # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
+        # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
+        # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
+        
+        cv2.imwrite(os.path.join("debug", "image_" + str(round(roll, 2)) + ".jpg"), images[0])
+        cv2.imwrite(os.path.join("debug", "bev_image_" + str(round(roll, 2)) + ".jpg"), bev_img)
         
         results['height_map'] = height_map
         return results
