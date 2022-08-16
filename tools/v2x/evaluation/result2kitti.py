@@ -13,7 +13,7 @@ from tools.v2x.evaluation.kitti_utils import kitti_common as kitti
 from tools.v2x.evaluation.kitti_utils.eval import kitti_eval
 # from mmdet3d.core.evaluation.kitti_utils.eval import kitti_eval
 
-category_map = {"car": "Car", "truck": "Car", "bus": "Car", "pedestrian": "Pedestrian", "bicycle": "Cyclist"}
+category_map = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Truck", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
 
 def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
     pred_annos, image_ids = kitti.get_label_annos(pred_label_path, return_ids=True)
@@ -160,7 +160,6 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             box = get_lidar_3d_8points([w, l, h], -yaw_lidar, bottom_center)
             box2d = bbbox2bbox(box, Tr_velo_to_cam, camera_intrinsic)
             if detection_score > 0.45 and class_name in category_map.keys():
-
                 i1 = category_map[class_name]
                 i2 = str(0)
                 i3 = str(0)

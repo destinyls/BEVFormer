@@ -14,6 +14,7 @@ from tools.v2x.dataset import SUPPROTED_DATASETS
 from tools.v2x.v2x_utils import range2box, id_to_str, Evaluator
 from tools.v2x.v2x_utils.vis_utils import *
 from tools.v2x.v2x_utils.kitti_utils import *
+from tools.data_converter.rope3d_converter import DemoVisual
 
 from scipy.spatial.transform import Rotation as R
 
@@ -219,6 +220,9 @@ def fill_infos(root_path, dataset, max_sweeps=10):
         info['gt_velocity'] = velocity.reshape(-1, 2)
         info['valid_flag'] = valid_flag
 
+        image = demo_tool(info)
+        cv2.imwrite("demo.jpg", image)
+
         dair_infos.append(info)
     return dair_infos
     
@@ -284,7 +288,8 @@ def _fill_trainval_infos(root_path,
 if __name__ == "__main__":   
     args = parse_args()
     data_root, out_dir, split_data = args.data_root, args.out_dir, args.split_data
-    
+    demo_tool = DemoVisual(0.01)
+
     box_range = np.array([-10, -49.68, -3, 79.12, 49.68, 1])
     indexs = [
         [0, 1, 2],

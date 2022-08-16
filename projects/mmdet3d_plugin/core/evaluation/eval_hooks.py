@@ -89,8 +89,8 @@ class CustomDistEvalHook(BaseDistEvalHook):
             result_files, _ = self.dataloader.dataset.format_results(results, jsonfile_prefix=results_path)
             result_files = result_files["pts_bbox"]
 
-            dair_root = "data/dair-v2x"
-            gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")            
+            dair_root = "data/rope3d"
+            gt_label_path = os.path.join("data/rope3d-kitti", "training", "label_2")            
             pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
             kitti_evaluation(pred_label_path, gt_label_path)
             #if self.save_best:

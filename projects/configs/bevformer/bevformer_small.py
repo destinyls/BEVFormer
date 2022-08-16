@@ -172,7 +172,8 @@ model = dict(
             pc_range=point_cloud_range))))
 
 dataset_type = 'CustomNuScenesDataset'
-data_root = 'data/dair-v2x/'
+# data_root = 'data/dair-v2x/'
+data_root = 'data/rope3d/'
 file_client_args = dict(backend='disk')
 
 train_pipeline = [
@@ -217,7 +218,8 @@ data = dict(
     train=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'dair_v2x_i_infos_temporal_train.pkl',
+        # ann_file=data_root + 'dair_v2x_i_infos_temporal_train.pkl',
+        ann_file=data_root + 'rope3d_infos_temporal_train.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         modality=input_modality,
@@ -230,12 +232,14 @@ data = dict(
         box_type_3d='LiDAR'),
     val=dict(type=dataset_type,
              data_root=data_root,
-             ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
+             # ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
+             ann_file=data_root + 'rope3d_infos_temporal_val.pkl',
              pipeline=test_pipeline,  bev_size=(bev_h_, bev_w_),
              classes=class_names, modality=input_modality, samples_per_gpu=1),
     test=dict(type=dataset_type,
               data_root=data_root,
-              ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
+              # ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
+              ann_file=data_root + 'rope3d_infos_temporal_val.pkl',
               pipeline=test_pipeline, bev_size=(bev_h_, bev_w_),
               classes=class_names, modality=input_modality),
     shuffler_sampler=dict(type='DistributedGroupSampler'),

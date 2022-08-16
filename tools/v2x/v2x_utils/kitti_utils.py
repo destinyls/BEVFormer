@@ -7,7 +7,7 @@ import os
 import cv2
 
 import numpy as np
-# from pypcd import pypcd
+from pypcd import pypcd
 
 def read_pcd(pcd_path):
     pcd = pypcd.PointCloud.from_path(pcd_path)
