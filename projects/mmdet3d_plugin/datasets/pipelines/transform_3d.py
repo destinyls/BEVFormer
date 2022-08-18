@@ -374,8 +374,9 @@ class ProduceHeightMap(object):
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
         
-        cv2.imwrite(os.path.join("debug", "image_" + str(round(roll, 2)) + ".jpg"), images[0])
-        cv2.imwrite(os.path.join("debug", "bev_image_" + str(round(roll, 2)) + ".jpg"), bev_img)
+        total_img = np.vstack([images[0], bev_img])
+        cv2.imwrite(os.path.join("debug", results["sample_idx"] + "_" + str(round(pitch, 2)) + ".jpg"), total_img)
+        # cv2.imwrite(os.path.join("debug", "bev_image_" + str(round(roll, 2)) + ".jpg"), bev_img)
         
         results['height_map'] = height_map
         return results
@@ -450,7 +451,7 @@ class ProduceHeightMap(object):
     
     def ground_ref_points(self, image, gt_bboxes_3d, lidar2img, x_size, y_size, idx):
         center_lidar = gt_bboxes_3d[0][:3]
-        w, l = 100, 60
+        w, l = 61.44, 40
         shape_top = np.array([w / self.resolution, l / self.resolution]).astype(np.int32)
         bev_img = np.zeros((shape_top[1], shape_top[0], 3))
         bev_img = bev_img.reshape(-1, 3)
@@ -459,7 +460,7 @@ class ProduceHeightMap(object):
         y, x = np.ogrid[-m:m + 1, -n:n + 1]
         xv, yv = np.meshgrid(x, y, sparse=False)
         xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis], (center_lidar[2] * np.ones_like(xv)[:,:,np.newaxis] / self.resolution).astype(np.int32)), axis=-1)
-        xyz = xyz + np.array([(0.5 * w + 0.5)/ self.resolution, 0.0, 0.0]).astype(np.int32).reshape(1,3)        
+        xyz = xyz + np.array([(0.5 * w + 13.0)/ self.resolution, 0.0, 0.0]).astype(np.int32).reshape(1,3)        
         xyz_points = xyz * self.resolution
         xyz_points = xyz_points.reshape(-1, 3)
         
@@ -535,7 +536,7 @@ class ImageReactify(object):
         lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
         
         M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
-        image = self.transform_with_M(image, M)
+        image = self.transform_with_M_bilinear(image, M)
         '''
         h, w, _ = image.shape
         center = (w // 2, h // 2)
@@ -577,7 +578,7 @@ class ImageReactify(object):
                 lidar2cam_pitch_rectify, lidar2img_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, pitch_abs=self.pitch_abs)            
                 lidar2cam_rectify = lidar2cam_pitch_rectify
                 M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
-                image = self.transform_with_M(image, M)
+                image = self.transform_with_M_bilinear(image, M)
                 
             '''
             roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_rectify)
@@ -606,18 +607,6 @@ class ImageReactify(object):
         M = np.matmul(M, R_inv)
         M = np.matmul(M, K_inv)
         return M
-    
-    def transform_with_M_shift(self, image, M):
-        ref_center = np.array([image.shape[1]//2, image.shape[0]//2, 1.0]).reshape(3,1)
-        ref_center_new = np.matmul(M, ref_center)
-        ref_center_new = ref_center_new[:2, 0] / ref_center_new[2, 0]
-        ref_center_new = ref_center_new.astype(np.int32)
-        
-        shift = ref_center_new[1] - ref_center[1]
-        height, width, _ = image.shape
-        mat = np.float32([[1, 0, 0], [0, 1, shift]])
-        image = cv2.warpAffine(image, mat, (width, height))
-        return image
                     
     def transform_with_M(self, image, M):
         image_new = np.zeros_like(image)
@@ -653,6 +642,42 @@ class ImageReactify(object):
         mask = mask.reshape(image.shape[0], image.shape[1])
         image_new[mask, :] = np.concatenate((image_new[:,1:,:], np.zeros((image_new.shape[0], 1, 3))), axis=1)[mask]
         
+        return image_new
+    
+    def transform_with_M_bilinear(self, image, M):
+        u = range(image.shape[1])
+        v = range(image.shape[0])
+        xu, yv = np.meshgrid(u, v)
+        uv = np.concatenate((xu[:,:,np.newaxis], yv[:,:,np.newaxis]), axis=2)
+        uvd = np.concatenate((uv, np.ones((uv.shape[0], uv.shape[1], 1))), axis=-1) * 10
+        uvd = uvd.reshape(-1, 3)
+        
+        M = np.linalg.inv(M)
+        uvd_new = np.matmul(M, uvd.T).T
+        uv_new = uvd_new[:,:2] / (uvd_new[:,2][:, np.newaxis])
+        uv_new_mask = uv_new.copy()
+        uv_new_mask = uv_new_mask.reshape(image.shape[0], image.shape[1], 2)
+        
+        uv_new[:,0] = np.clip(uv_new[:,0], 0, image.shape[1]-2)
+        uv_new[:,1] = np.clip(uv_new[:,1], 0, image.shape[0]-2)
+        uv_new = uv_new.reshape(image.shape[0], image.shape[1], 2)
+        
+        image_new = np.zeros_like(image)
+        corr_x, corr_y = uv_new[:,:,1], uv_new[:,:,0]
+        point1 = np.concatenate((np.floor(corr_x)[:,:,np.newaxis].astype(np.int32), np.floor(corr_y)[:,:,np.newaxis].astype(np.int32)), axis=2)
+        point2 = np.concatenate((point1[:,:,0][:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
+        point3 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], point1[:,:,1][:,:,np.newaxis]), axis=2)
+        point4 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
+
+        fr1 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point1[:,:,0], point1[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point2[:,:,0], point2[:,:,1], :]
+        fr2 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point3[:,:,0], point3[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point4[:,:,0], point4[:,:,1], :]
+        image_new = (point3[:,:,0] - corr_x)[:,:,np.newaxis] * fr1 + (corr_x - point1[:,:,0])[:,:,np.newaxis] * fr2
+        
+        mask_1 = np.logical_or(uv_new_mask[:,:,0] < 0, uv_new_mask[:,:,0] > image.shape[1] -2)
+        mask_2 = np.logical_or(uv_new_mask[:,:,1] < 0, uv_new_mask[:,:,1] > image.shape[0] -2)
+        mask = np.logical_or(mask_1, mask_2)
+        image_new[mask] = [0,0,0]
+        image_new = image_new.astype(np.float32)
         return image_new
     
 @PIPELINES.register_module()
