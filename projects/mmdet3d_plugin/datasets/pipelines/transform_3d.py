@@ -369,7 +369,7 @@ class ProduceHeightMap(object):
             
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
             roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
-
+            print("roll pitch: ", roll, pitch)
         # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
@@ -520,6 +520,30 @@ class ImageReactify(object):
         pitch = -1 * self.rad2degree(pitch) if target_vector_yz[1] > 0 else self.rad2degree(pitch)
         return roll, pitch
     
+    def get_denorm(self, src_denorm_file):
+        with open(src_denorm_file, 'r') as f:
+            lines = f.readlines()
+        denorm = np.array([float(item) for item in lines[0].split(' ')])
+        return denorm
+    
+    def parse_roll_pitch_v2(self, sample_token, is_train=False):
+        if is_train:
+            denorm_file = os.path.join("data/rope3d/training/denorm", sample_token + ".txt")
+        else:
+            denorm_file = os.path.join("data/rope3d/validation/denorm", sample_token + ".txt")
+        denorm = self.get_denorm(denorm_file)
+        denorm = -1 * denorm
+        origin_vector = np.array([0, 1.0, 0])
+        target_vector_xy = np.array([denorm[0], denorm[1], 0.0])
+        target_vector_yz = np.array([0.0, denorm[1], denorm[2]])
+        target_vector_xy = target_vector_xy / np.sqrt(target_vector_xy[0]**2 + target_vector_xy[1]**2 + target_vector_xy[2]**2)       
+        target_vector_yz = target_vector_yz / np.sqrt(target_vector_yz[0]**2 + target_vector_yz[1]**2 + target_vector_yz[2]**2)       
+        roll = math.acos(np.inner(origin_vector, target_vector_xy))
+        pitch = math.acos(np.inner(origin_vector, target_vector_yz))
+        roll = -1 * self.rad2degree(roll) if target_vector_xy[0] > 0 else self.rad2degree(roll)
+        pitch = -1 * self.rad2degree(pitch) if target_vector_yz[1] > 0 else self.rad2degree(pitch)
+        return roll, pitch
+    
     def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,]):
         if len(target_roll) > 1:
             target_roll_status = np.random.uniform(target_roll[0], target_roll[1])
@@ -547,8 +571,12 @@ class ImageReactify(object):
         return lidar2cam_rectify, lidar2img_rectify, image
     
     def reactify_pitch_params(self, lidar2cam, cam_intrinsic, pitch, pitch_abs=2.0):
-        target_pitch_status = np.random.uniform(pitch - pitch_abs, pitch + pitch_abs)
-        pitch = target_pitch_status - pitch
+        if len(pitch_abs) > 1:
+            target_pitch_status = np.random.uniform(pitch + pitch_abs[0], pitch + pitch_abs[1])
+        else:
+            target_pitch_status = pitch_abs[0]
+            
+        pitch = 1 * (target_pitch_status - pitch)
         pitch = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch), -math.sin(pitch), 0], 
@@ -571,6 +599,7 @@ class ImageReactify(object):
             image = results["img"][idx].copy()
             
             roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
+            roll, pitch = self.parse_roll_pitch_v2(results["sample_idx"], True)
             lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
             lidar2cam_rectify = lidar2cam_roll_rectify
             

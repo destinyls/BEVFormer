@@ -180,7 +180,7 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    # dict(type='ImageReactify', target_roll=[-8,8], pitch_abs=3.0),
+    dict(type='ImageReactify', target_roll=[0.495], pitch_abs=None),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
@@ -264,12 +264,12 @@ lr_config = dict(
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
 total_epochs = 70
-evaluation = dict(interval=1, pipeline=test_pipeline)
+evaluation = dict(interval=3, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 load_from = 'ckpts/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
-    interval=60,
+    interval=10,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')
