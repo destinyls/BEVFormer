@@ -191,11 +191,11 @@ def parse_args():
         required=False,
         help='path to save the exported json')
     parser.add_argument(
-        '--split-data',
+        '--split-setting',
         type=str,
-        default='./tools/data/cooperative-split-data.json',
+        default='hom',
         required=False,
-        help='path to split data')
+        help='type of split setting')
     args = parser.parse_args()
     return args
 
@@ -308,47 +308,17 @@ def get_annos(src_label_path, Tr_cam2lidar):
                 loc_lidar[2] += 0.5 * float(row['dh'])
                 anno = {"dim": dim, "loc": loc_lidar, "rotation": rotation, "name": name, "box2d": box2d, "truncated_state": truncated_state, "occluded_state": occluded_state}
                 annos.append(anno)
-
     return annos
 
-def create_data(src_root, out_dir, split='train', version="v1.0", demo=False):
-    if split == 'train':
-        src_dir = os.path.join(src_root, "training")
-        img_paths = ["training-image_2a", "training-image_2b", "training-image_2c", "training-image_2d"]
-        depth_img_path = "training-depth_2"
-    else:
-        src_dir = os.path.join(src_root, "validation")
-        img_paths = ["validation-image_2"]
-        depth_img_path = "validation-depth_2"
-
-    src_depth_img_path = os.path.join(src_dir, "../", depth_img_path)
-    src_label_path = os.path.join(src_dir, "label_2")
-    src_calib_path = os.path.join(src_dir, "calib")
-    src_denorm_path = os.path.join(src_dir, "denorm")
-    src_extrinsics_path = os.path.join(src_dir, "extrinsics")
-    
-    split_txt = os.path.join(src_dir, "train.txt" if split=='train' else 'val.txt')
-    idx_list = [x.strip() for x in open(split_txt).readlines()]
-    index_list = []
-    for index in idx_list:
-        for img_path in img_paths:
-            src_img_path = os.path.join(src_dir, "../", img_path)
-            img_file = os.path.join(src_img_path, index + ".jpg")
-            if os.path.exists(img_file):
-                index_list.append((img_path, index))
-                break
-    
-    # index_list=random.sample(index_list, int(len(index_list) * 0.2))
+def create_data(index_list, info_path, version, demo=False):
     rope3d_infos = []
     for idx in tqdm(range(len(index_list))):
-        img_path, index = index_list[idx]
-        src_img_path = os.path.join(src_dir, "../", img_path)
-        
-        src_img_file = os.path.join(src_img_path, index + ".jpg")
-        src_label_file = os.path.join(src_label_path, index + ".txt")
-        src_calib_file = os.path.join(src_calib_path, index + ".txt")
-        src_denorm_file = os.path.join(src_denorm_path, index + ".txt")
-        src_extrinsics_file = os.path.join(src_extrinsics_path, index + ".yaml")
+        src_dir, img_path, index = index_list[idx]
+        src_label_file = os.path.join(src_dir, "label_2", index + ".txt")
+        src_calib_file = os.path.join(src_dir, "calib", index + ".txt")
+        src_denorm_file = os.path.join(src_dir, "denorm", index + ".txt")
+        src_extrinsics_file = os.path.join(src_dir, "extrinsics", index + ".yaml")
+        src_img_file = os.path.join(src_dir, "../", img_path, index + ".jpg")
     
         r_velo2world, t_velo2world, serial_number = get_cam2world(src_extrinsics_file)
         r_velo2ego = R.from_matrix(np.eye(3)).as_quat()
@@ -369,7 +339,6 @@ def create_data(src_root, out_dir, split='train', version="v1.0", demo=False):
             'ego2global_rotation': r_velo2world,
             'timestamp': int(6666666666666),
         }
-
         camera_types = [
             'CAM_FRONT',
         ]
@@ -391,13 +360,10 @@ def create_data(src_root, out_dir, split='train', version="v1.0", demo=False):
                 "cam_intrinsic": cam_intrinsic,
             }
             info['cams'].update({cam: cam_info})
-            
         # obtain sweeps for a single key-frame        
         info['sweeps'] = []
-        
         # obtain annotation
         annos = get_annos(src_label_file, Tr_cam2lidar)
-        
         names = np.array([anno["name"] for anno in annos])
         locs = np.array([anno["loc"] for anno in annos]).reshape(-1, 3)
         dims = np.array([anno["dim"] for anno in annos]).reshape(-1, 3)
@@ -406,37 +372,79 @@ def create_data(src_root, out_dir, split='train', version="v1.0", demo=False):
         valid_flag = np.array([True for anno in annos], dtype=bool).reshape(-1)        
         # we need to convert rot to SECOND format.
         gt_boxes = np.concatenate([locs, dims, -rots - np.pi / 2], axis=1)
-
         info['gt_boxes'] = gt_boxes
         info['gt_names'] = names
         info['gt_velocity'] = velocity.reshape(-1, 2)
         info['valid_flag'] = valid_flag
         rope3d_infos.append(info)
-        
         if demo:
             image, bev_image = demo_tool(info)
             cv2.imwrite("demo_image.jpg", image)
             cv2.imwrite("demo_bev_image.jpg", bev_image)      
-        
     metadata = dict(version=version)
-    print(split, ' sample: {}'.format(len(rope3d_infos)))
     data = dict(infos=rope3d_infos, metadata=metadata)
-    info_path = os.path.join(out_dir, 'rope3d_infos_temporal_{}.pkl'.format(split))
     mmcv.dump(data, info_path)
+
+def create_het_data(src_root, out_dir, split='train', version="v1.0", demo=False):
+    if split == 'train':
+        src_dir = os.path.join(src_root, "training")
+        img_paths = ["training-image_2a", "training-image_2b", "training-image_2c", "training-image_2d"]
+    else:
+        src_dir = os.path.join(src_root, "validation")
+        img_paths = ["validation-image_2"]
+    
+    split_txt = os.path.join(src_dir, "train.txt" if split=='train' else 'val.txt')
+    idx_list = [x.strip() for x in open(split_txt).readlines()]
+    index_list = []
+    for index in idx_list:
+        for img_path in img_paths:
+            src_img_path = os.path.join(src_dir, "../", img_path)
+            img_file = os.path.join(src_img_path, index + ".jpg")
+            if os.path.exists(img_file):
+                index_list.append((src_dir, img_path, index))
+                break
+    info_path = os.path.join(out_dir, 'rope3d_infos_temporal_het_{}.pkl'.format(split))
+    create_data(index_list, info_path, version)
+    
+def create_hom_data(src_root, out_dir, version="v1.0", demo=False):
+    src_dir = os.path.join(src_root, "training")
+    split_txt = os.path.join(src_dir, "train.txt")
+    idx_list = [x.strip() for x in open(split_txt).readlines()]
+    img_paths = ["training-image_2a", "training-image_2b", "training-image_2c", "training-image_2d"]
+    index_list = []
+    for index in idx_list:
+        for img_path in img_paths:
+            src_img_path = os.path.join(src_dir, "../", img_path)
+            img_file = os.path.join(src_img_path, index + ".jpg")
+            if os.path.exists(img_file):
+                index_list.append((src_dir, img_path, index))
+                break
+    src_dir = os.path.join(src_root, "validation")
+    split_txt = os.path.join(src_dir, 'val.txt')
+    idx_list = [x.strip() for x in open(split_txt).readlines()]
+    img_paths = ["validation-image_2"]
+    for index in idx_list:
+        for img_path in img_paths:
+            src_img_path = os.path.join(src_dir, "../", img_path)
+            img_file = os.path.join(src_img_path, index + ".jpg")
+            if os.path.exists(img_file):
+                index_list.append((src_dir, img_path, index))
+                break
+    random.shuffle(index_list)
+    train_index_list = index_list[:int(0.7 * len(index_list))]
+    val_index_list = index_list[int(0.7 * len(index_list)):]
+    train_info_path = os.path.join(out_dir, 'rope3d_infos_temporal_hom_train.pkl')
+    val_info_path = os.path.join(out_dir, 'rope3d_infos_temporal_hom_val.pkl')
+    create_data(train_index_list, train_info_path, version)
+    create_data(val_index_list, val_info_path, version)
 
 if __name__ == "__main__":   
     args = parse_args()
-    data_root, out_dir, split_data = args.data_root, args.out_dir, args.split_data
+    data_root, out_dir, split_setting = args.data_root, args.out_dir, args.split_setting
     demo_tool = DemoVisual(0.03)
-
-    create_data(data_root, out_dir, split_data)
-    
-    '''
-    with open(os.path.join("data/dair-v2x", "dair_v2x_i_infos_temporal_trainval.pkl"), 'rb') as f:
-        train_infos = pickle.load(f)
-    for info in train_infos["infos"]:
-        image, bev_image = demo_tool(info)
-        cv2.imwrite("demo_image.jpg", image)
-        cv2.imwrite("demo_bev_image.jpg", bev_image)
-    '''
-    
+    if split_setting == "het":
+        create_het_data(data_root, out_dir, "train")
+        create_het_data(data_root, out_dir, "val")
+    else:
+        create_hom_data(data_root, out_dir)
+        

@@ -127,17 +127,22 @@ def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
 def result2kitti(results_file, results_path, dair_root, demo=False):
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
-    with open("data/rope3d-kitti/ImageSets/val.json") as fp:
+    with open("data/rope3d-kitti/ImageSets/train.json") as fp:
         token2sample = json.load(fp)
+    with open("data/rope3d-kitti/ImageSets/val.json") as fp:
+        token2sample_1 = json.load(fp)
+    token2sample.update(token2sample_1)
     for sample_token in tqdm(results.keys()):
         sample_id = int(token2sample[sample_token])
-
-        src_denorm_file = os.path.join(dair_root, "validation/denorm", sample_token + ".txt")
+        src_denorm_file = os.path.join(dair_root, "training/denorm", sample_token + ".txt")
+        src_calib_file = os.path.join(dair_root, "training/calib", sample_token + ".txt")
+        if not os.path.exists(src_denorm_file):
+            src_denorm_file = os.path.join(dair_root, "validation/denorm", sample_token + ".txt")
+            src_calib_file = os.path.join(dair_root, "validation/calib", sample_token + ".txt")
+  
         Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
-        src_calib_file = os.path.join(dair_root, "validation/calib", sample_token + ".txt")
         camera_intrinsic = get_cam_intrinsic(src_calib_file)
         camera_intrinsic = np.concatenate([camera_intrinsic, np.zeros((camera_intrinsic.shape[0], 1))], axis=1)
-        
         preds = results[sample_token]
         pred_lines = []
         bboxes = []
@@ -153,7 +158,6 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             x, y, z = loc[0], loc[1], loc[2]            
             bottom_center = [x, y, z]
             obj_size = [l, w, h]
-            
             bottom_center_in_cam = r_velo2cam * np.matrix(bottom_center).T + t_velo2cam
             alpha, yaw = get_camera_3d_8points(
                 obj_size, yaw_lidar, bottom_center, bottom_center_in_cam, r_velo2cam, t_velo2cam
@@ -186,7 +190,6 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             label_path = os.path.join(dair_root, "label/camera", "{:06d}".format(sample_id) + ".json")
             demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
             pcd_vis(pcd_path, bboxes, demo_file, label_path)
-
     return os.path.join(results_path, "data")
 
 if __name__ == "__main__":
