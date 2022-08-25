@@ -44,27 +44,11 @@ def rad2degree(radian):
 def degree2rad(degree):
     return degree * np.pi / 180
 
-def parse_roll_pitch(lidar2cam):
-    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
-    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
-    ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
-    denorm = equation_plane(ground_points_cam)
-    origin_vector = np.array([0, 1.0, 0])
-    target_vector_xy = np.array([denorm[0], denorm[1], 0.0])
-    target_vector_yz = np.array([0.0, denorm[1], denorm[2]])
-    target_vector_xy = target_vector_xy / np.sqrt(target_vector_xy[0]**2 + target_vector_xy[1]**2 + target_vector_xy[2]**2)       
-    target_vector_yz = target_vector_yz / np.sqrt(target_vector_yz[0]**2 + target_vector_yz[1]**2 + target_vector_yz[2]**2)       
-    roll = math.acos(np.inner(origin_vector, target_vector_xy))
-    pitch = math.acos(np.inner(origin_vector, target_vector_yz))
-    roll = -1 * rad2degree(roll) if target_vector_xy[0] > 0 else rad2degree(roll)
-    pitch = -1 * rad2degree(pitch) if target_vector_yz[1] > 0 else rad2degree(pitch)
-    return roll, pitch
-
-def parse_roll_pitch_v2(sample_token, is_train=False):
-    if is_train:
-        denorm_file = os.path.join("data/rope3d/training/denorm", sample_token + ".txt")
-    else:
+def parse_roll_pitch(sample_token, is_train=False):
+    denorm_file = os.path.join("data/rope3d/training/denorm", sample_token + ".txt")
+    if not os.path.exists(denorm_file):
         denorm_file = os.path.join("data/rope3d/validation/denorm", sample_token + ".txt")
+        
     denorm = get_denorm(denorm_file)
     denorm = -1 * denorm
     origin_vector = np.array([0, 1.0, 0])
@@ -111,9 +95,7 @@ def parse_data_infos(data_pkl, is_train=False):
         viewpad[:intrinsic.shape[0], :intrinsic.shape[1]] = intrinsic
         lidar2img_rt = (viewpad @ lidar2cam_rt.T)
         lidar2cam, lidar2img = lidar2cam_rt, lidar2img_rt
-        
-        roll, pitch = parse_roll_pitch(lidar2cam)
-        roll, pitch, distance = parse_roll_pitch_v2(info["token"], is_train)
+        roll, pitch, distance = parse_roll_pitch(info["token"], is_train)
         
         fx, fy = intrinsic[0,0], intrinsic[1,1]
         ext_key = str(round(abs(roll), 4)) + "_" + str(round(abs(pitch), 4))
@@ -143,7 +125,7 @@ def create_val_mini_infos(data_pkl, is_train=False):
     '''
     metadata = dict(version="v1.0")
     data = dict(infos=rope3d_infos, metadata=metadata)
-    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_val_mini.pkl')
+    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_val_hom_mini.pkl')
     mmcv.dump(data, info_path)
 
 def create_train_mini_infos(data_pkl, is_train=False):
@@ -162,16 +144,17 @@ def create_train_mini_infos(data_pkl, is_train=False):
     '''
     metadata = dict(version="v1.0")
     data = dict(infos=rope3d_infos, metadata=metadata)
-    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_train_mini.pkl')
+    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_train_hom_mini.pkl')
     mmcv.dump(data, info_path)
 
 if __name__ == "__main__":
     args = parse_args()
-    train_data_pkl = "data/rope3d/rope3d_infos_temporal_het_train.pkl"
-    val_data_pkl = "data/rope3d/rope3d_infos_temporal_het_val.pkl"
-    # create_train_mini_infos(train_data_pkl, True)
-    # create_val_mini_infos(val_data_pkl, False)
+    train_data_pkl = "data/rope3d/rope3d_infos_temporal_hom_train.pkl"
+    val_data_pkl = "data/rope3d/rope3d_infos_temporal_hom_val.pkl"
+    create_train_mini_infos(train_data_pkl, True)
+    create_val_mini_infos(val_data_pkl, False)
 
+    print("finished ...")
     img_paths = ["training-image_2a", "training-image_2b", "training-image_2c", "training-image_2d"]
     # plt.subplots_adjust(wspace=0.3, hspace=0.3)
     roll_list, pitch_list, distance_list, f_list, file_list, scenes_json = parse_data_infos(train_data_pkl, True)

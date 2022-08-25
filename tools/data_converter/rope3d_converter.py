@@ -447,4 +447,3 @@ if __name__ == "__main__":
         create_het_data(data_root, out_dir, "val")
     else:
         create_hom_data(data_root, out_dir)
-        

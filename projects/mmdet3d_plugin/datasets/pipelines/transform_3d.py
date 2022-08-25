@@ -531,6 +531,7 @@ class ImageReactify(object):
             denorm_file = os.path.join("data/rope3d/training/denorm", sample_token + ".txt")
         else:
             denorm_file = os.path.join("data/rope3d/validation/denorm", sample_token + ".txt")
+        
         denorm = self.get_denorm(denorm_file)
         denorm = -1 * denorm
         origin_vector = np.array([0, 1.0, 0])
@@ -576,7 +577,7 @@ class ImageReactify(object):
         else:
             target_pitch_status = pitch_abs[0]
             
-        pitch = 1 * (target_pitch_status - pitch)
+        pitch = -1 * (target_pitch_status - pitch)
         pitch = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch), -math.sin(pitch), 0], 
@@ -599,7 +600,6 @@ class ImageReactify(object):
             image = results["img"][idx].copy()
             
             roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
-            roll, pitch = self.parse_roll_pitch_v2(results["sample_idx"], True)
             lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
             lidar2cam_rectify = lidar2cam_roll_rectify
             

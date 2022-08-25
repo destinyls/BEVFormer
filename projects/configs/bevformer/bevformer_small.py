@@ -19,7 +19,6 @@ plugin_dir = 'projects/mmdet3d_plugin/'
 point_cloud_range = [0.0, -51.2, -5.0, 102.4, 51.2, 5.0]
 voxel_size = [0.2, 0.2, 8]
 
-
 img_norm_cfg = dict(
     mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 # For nuScenes we usually do 10-class detection
@@ -180,7 +179,7 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    dict(type='ImageReactify', target_roll=[-2.0, 2.0], pitch_abs=[-2.0, 2.0]),
+    dict(type='ImageReactify', target_roll=[-2.0, 2.0], pitch_abs=[-1.0, 1.0]),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
@@ -219,7 +218,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         # ann_file=data_root + 'dair_v2x_i_infos_temporal_train.pkl',
-        ann_file=data_root + 'rope3d_infos_temporal_train_mini.pkl',
+        ann_file=data_root + 'rope3d_infos_temporal_train_hom_mini.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         modality=input_modality,
@@ -233,13 +232,13 @@ data = dict(
     val=dict(type=dataset_type,
              data_root=data_root,
              # ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
-             ann_file=data_root + 'rope3d_infos_temporal_val_mini.pkl',
+             ann_file=data_root + 'rope3d_infos_temporal_val_hom_mini.pkl',
              pipeline=test_pipeline,  bev_size=(bev_h_, bev_w_),
              classes=class_names, modality=input_modality, samples_per_gpu=1),
     test=dict(type=dataset_type,
               data_root=data_root,
               # ann_file=data_root + 'dair_v2x_i_infos_temporal_val.pkl',
-              ann_file=data_root + 'rope3d_infos_temporal_val_mini.pkl',
+              ann_file=data_root + 'rope3d_infos_temporal_val_hom_mini.pkl',
               pipeline=test_pipeline, bev_size=(bev_h_, bev_w_),
               classes=class_names, modality=input_modality),
     shuffler_sampler=dict(type='DistributedGroupSampler'),
@@ -263,7 +262,7 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 72
+total_epochs = 60
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
