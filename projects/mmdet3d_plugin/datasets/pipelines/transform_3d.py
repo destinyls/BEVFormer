@@ -256,7 +256,7 @@ class CustomCollect3D(object):
                             'img_norm_cfg', 'pcd_trans', 'sample_idx', 'prev_idx', 'next_idx',
                             'pcd_scale_factor', 'pcd_rotation', 'pts_filename',
                             'transformation_3d_flow', 'scene_token',
-                            'can_bus', 'height_map', 'height_mask', 'cam_intrinsic', 'lidar2cam',
+                            'can_bus', 'height_map', 'height_mask', 'cam_intrinsic', 'lidar2cam', 'cache_sample'
                             )):
         self.keys = keys
         self.meta_keys = meta_keys
@@ -330,7 +330,7 @@ class RandomScaleImageMultiViewImage(object):
     
 @PIPELINES.register_module()
 class ProduceHeightMap(object):
-    def __init__(self, resolution=[], back_ratio=[]):
+    def __init__(self, resolution=0.04, back_ratio=0.05):
         self.resolution = resolution
         self.back_ratio = back_ratio
         self.image_reatify = ImageReactify(target_roll=[0.0,], pitch_abs=None)
@@ -369,7 +369,6 @@ class ProduceHeightMap(object):
             
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
             roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
-            print("roll pitch: ", roll, pitch)
         # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
@@ -377,6 +376,7 @@ class ProduceHeightMap(object):
         total_img = np.vstack([images[0], bev_img])
         cv2.imwrite(os.path.join("debug", results["sample_idx"] + "_" + str(round(pitch, 2)) + ".jpg"), total_img)
         # cv2.imwrite(os.path.join("debug", "bev_image_" + str(round(roll, 2)) + ".jpg"), bev_img)
+        cv2.imwrite(os.path.join("demo.jpg"), total_img)
         
         results['height_map'] = height_map
         return results

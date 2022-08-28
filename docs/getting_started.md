@@ -6,7 +6,10 @@
 
 Train BEVFormer with 8 GPUs 
 ```
-./tools/dist_train.sh ./projects/configs/bevformer/bevformer_small.py 8 --work-dir work_dirs/
+CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 bash ./tools/dist_train.sh ./projects/configs/bevformer/bevformer_small.py 6 --work-dir work_dirs/
+
+CUDA_VISIBLE_DEVICES=7 bash ./tools/dist_train.sh ./projects/configs/bevformer/bevformer_small.py 1 --work-dir work_dirs/
+
 
 CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 bash tools/dist_train.sh ./projects/configs/bevformer/bevformer_small.py 7 --work-dir work_dirs/
 ```

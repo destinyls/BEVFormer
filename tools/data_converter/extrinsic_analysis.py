@@ -125,7 +125,7 @@ def create_val_mini_infos(data_pkl, is_train=False):
     '''
     metadata = dict(version="v1.0")
     data = dict(infos=rope3d_infos, metadata=metadata)
-    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_val_hom_mini.pkl')
+    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_val_het_mini.pkl')
     mmcv.dump(data, info_path)
 
 def create_train_mini_infos(data_pkl, is_train=False):
@@ -144,13 +144,13 @@ def create_train_mini_infos(data_pkl, is_train=False):
     '''
     metadata = dict(version="v1.0")
     data = dict(infos=rope3d_infos, metadata=metadata)
-    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_train_hom_mini.pkl')
+    info_path = os.path.join("data/rope3d", 'rope3d_infos_temporal_train_het_mini.pkl')
     mmcv.dump(data, info_path)
 
 if __name__ == "__main__":
     args = parse_args()
-    train_data_pkl = "data/rope3d/rope3d_infos_temporal_hom_train.pkl"
-    val_data_pkl = "data/rope3d/rope3d_infos_temporal_hom_val.pkl"
+    train_data_pkl = "data/rope3d/rope3d_infos_temporal_het_train.pkl"
+    val_data_pkl = "data/rope3d/rope3d_infos_temporal_het_val.pkl"
     create_train_mini_infos(train_data_pkl, True)
     create_val_mini_infos(val_data_pkl, False)
 

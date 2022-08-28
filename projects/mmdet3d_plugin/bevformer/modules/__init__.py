@@ -5,3 +5,4 @@ from .encoder import BEVFormerEncoder, BEVFormerLayer
 from .decoder import DetectionTransformerDecoder
 from .height_net import HeightNet
 from .ray_embeds import RayEmbeds
+from .self_training import SelfTraining

@@ -38,6 +38,7 @@ class BEVFormer(MVXTwoStageDetector):
                  pts_neck=None,
                  height_net=None,
                  ray_embeds=None,
+                 self_training=None,
                  pts_bbox_head=None,
                  img_roi_head=None,
                  img_rpn_head=None,
@@ -67,7 +68,10 @@ class BEVFormer(MVXTwoStageDetector):
         if ray_embeds is not None:
             self.ray_embeds = builder.build_neck(ray_embeds)
             self.enable_ray_embeds = True
-
+        self.enable_self_training = False
+        if self_training is not None:
+            self.simsiam = builder.build_neck(self_training)
+            self.enable_self_training = True
         # temporal
         self.video_test_mode = video_test_mode
         self.prev_frame_info = {
@@ -150,6 +154,9 @@ class BEVFormer(MVXTwoStageDetector):
             pts_feats, img_metas, prev_bev)
         loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
         losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
+        if self.enable_self_training and gt_bboxes_3d[0].gravity_center.shape[0] > 1:
+            loss_simsiam = self.simsiam(outs["bev_embed"], gt_bboxes_3d)
+            losses["simsiam_loss"] = loss_simsiam
         return losses
 
     def forward_dummy(self, img):
@@ -231,7 +238,7 @@ class BEVFormer(MVXTwoStageDetector):
         len_queue = img.size(1)
         prev_img = img[:, :-1, ...]
         img = img[:, -1, ...]
-
+        
         prev_img_metas = copy.deepcopy(img_metas)
         prev_bev = self.obtain_history_bev(prev_img, prev_img_metas) if len_queue > 1 else None
 
