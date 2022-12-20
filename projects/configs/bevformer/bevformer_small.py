@@ -67,6 +67,13 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    self_training=dict(
+        type='SelfTraining',
+        in_dim=256,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,
@@ -176,11 +183,13 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
+    dict(type='ImageReactify', target_roll=0.0, target_pitch=13.0),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.8]),
     dict(type='PadMultiViewImage', size_divisor=32),
+    dict(type='ProduceHeightMap', resolution=[0.04], back_ratio=[0.05]),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img'])
 ]
