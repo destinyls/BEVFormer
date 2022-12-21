@@ -7,6 +7,7 @@
 import torch
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
+from mmdet3d.models import builder
 from mmdet3d.core import bbox3d2result
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
@@ -34,6 +35,7 @@ class BEVFormer(MVXTwoStageDetector):
                  pts_backbone=None,
                  img_neck=None,
                  pts_neck=None,
+                 self_training=None,
                  pts_bbox_head=None,
                  img_roi_head=None,
                  img_rpn_head=None,
@@ -54,6 +56,11 @@ class BEVFormer(MVXTwoStageDetector):
         self.use_grid_mask = use_grid_mask
         self.fp16_enabled = False
 
+        self.enable_self_training = False
+        if self_training is not None:
+            self.simsiam = builder.build_neck(self_training)
+            self.enable_self_training = True
+            
         # temporal
         self.video_test_mode = video_test_mode
         self.prev_frame_info = {
@@ -134,6 +141,14 @@ class BEVFormer(MVXTwoStageDetector):
             pts_feats, img_metas, prev_bev)
         loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
         losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
+        
+        if self.enable_self_training:
+            if gt_bboxes_3d[0].gravity_center.shape[0] > 1:
+                loss_simsiam = self.simsiam(outs["bev_embed"], gt_bboxes_3d)
+                losses["simsiam_loss"] = loss_simsiam
+            else:
+                losses["simsiam_loss"] = losses["loss_bbox"]
+                
         return losses
 
     def forward_dummy(self, img):

@@ -1,6 +1,14 @@
 import numpy as np
 from numpy import random
 import mmcv
+import cv2
+import os
+import math
+import torch
+
+import numpy as np
+from numpy import random
+import mmcv
 from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
 
@@ -325,3 +333,373 @@ class RandomScaleImageMultiViewImage(object):
         repr_str = self.__class__.__name__
         repr_str += f'(size={self.scales}, '
         return repr_str
+    
+    
+@PIPELINES.register_module()
+class ProduceHeightMap(object):
+    def __init__(self, resolution=0.04, back_ratio=0.05):
+        self.resolution = resolution
+        self.back_ratio = back_ratio
+        self.image_reatify = ImageReactify(target_roll=[0.0,], target_pitch=None)
+        self.count = 0
+        
+    def __call__(self, results):
+        height_map = [np.zeros((img.shape[0], img.shape[1])) for idx, img in enumerate(results['img'])]
+        images = [img for idx, img in enumerate(results['img'])]
+
+        y_size = [int(img.shape[0]) for img in results['img']]
+        x_size = [int(img.shape[1]) for img in results['img']]
+        gt_bboxes_3d  = torch.clone(results["gt_bboxes_3d"].tensor).numpy()
+        
+        for idx in range(len(height_map)):
+            lidar2img = results["lidar2img"][idx]
+            lidar2cam = results["lidar2cam"][idx]
+            bev_img = self.ground_ref_points(images[0], gt_bboxes_3d, lidar2img, x_size, y_size, idx)
+
+            surface_points_list = []
+            for obj_id in range(gt_bboxes_3d.shape[0]):
+                gt_bbox = gt_bboxes_3d[obj_id]
+                lwh = gt_bbox[3:6]
+                center_lidar = gt_bbox[:3] + [0.0, 0.0, 0.5 * lwh[2]]
+                yaw_lidar = gt_bbox[6]
+                surface_points = self.box3d_surface(lwh, center_lidar, -yaw_lidar, lidar2cam)   
+                surface_points_list.append(surface_points)
+            surface_points = np.vstack(surface_points_list)
+            
+            surface_points_cam = np.matmul(lidar2cam, np.concatenate((surface_points, np.ones((surface_points.shape[0],1))), axis=1).T).T
+            mask = surface_points_cam[:, 2] > 0.5
+            surface_points = surface_points[mask]
+
+            surface_points_img = np.matmul(lidar2img, np.concatenate((surface_points, np.ones((surface_points.shape[0],1))), axis=1).T).T
+            surface_points_img = surface_points_img[:,:2] / (surface_points_img[:,2] + 10e-6)[:, np.newaxis]
+            surface_points_img = surface_points_img.astype(np.int32)
+            surface_points_img[:,0] = np.clip(surface_points_img[:,0], 0, x_size[idx]-1)
+            surface_points_img[:,1] = np.clip(surface_points_img[:,1], 0, y_size[idx]-1)
+            
+            height = surface_points[:, 2]
+            height_map[idx][surface_points_img[:,1], surface_points_img[:,0]] = height
+            
+            images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
+            roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
+        # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
+        # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
+        # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
+        
+        # total_img = np.vstack([images[0], bev_img])
+        
+        total_img = images[0]
+        cv2.imwrite(os.path.join("debug", results["sample_idx"] + "_" + str(round(pitch, 2)) + ".jpg"), total_img)
+        cv2.imwrite(os.path.join("demo", str(self.count) + ".jpg"), total_img)
+        self.count = self.count + 1
+        
+        results['height_map'] = height_map
+        return results
+    
+    def local2global(self, points, center_lidar, yaw_lidar):
+        points_3d_lidar = points.reshape(-1, 3)
+        rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
+                            [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
+                            [0, 0, 1]])
+        points_3d_lidar = np.matmul(rot_mat, points_3d_lidar.T).T + center_lidar
+        return points_3d_lidar
+    
+    def global2cam(self, points, lidar2cam):
+        points = np.concatenate((points[:, :3], np.ones((points.shape[0], 1))), axis=1)
+        points = np.matmul(lidar2cam, points.T).T
+        return points[:, :3]
+    
+    def distance(self, point):
+        return np.sqrt(point[0]**2 + point[1]**2 + point[2]**2)
+    
+    def box3d_surface(self, lwh, center_lidar, yaw_lidar, lidar2cam):
+        w, l, h = lwh[0], lwh[1], lwh[2]
+        surface_points = []
+        # top
+        shape_top = np.array([w / self.resolution, l / self.resolution]).astype(np.int32)
+        n, m = [(ss - 1.) / 2. for ss in shape_top]
+        y, x = np.ogrid[-m:m + 1, -n:n + 1]
+        xv, yv = np.meshgrid(x, y, sparse=False)
+        xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis],  0.5 * np.ones_like(xv)[:,:,np.newaxis] * h / self.resolution), axis=-1)
+        points_top = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
+        # left
+        shape_left = np.array([h / self.resolution, l / self.resolution]).astype(np.int32)
+        n, m = [(ss - 1.) / 2. for ss in shape_left]
+        x, z = np.ogrid[-m:m + 1, -n:n + 1]
+        xv, zv = np.meshgrid(x, z, sparse=False)    
+        xyz = np.concatenate((0.5 * np.ones_like(xv)[:,:,np.newaxis] * w / self.resolution, xv[:,:,np.newaxis], zv[:,:,np.newaxis]), axis=-1)
+        points_left = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
+        points_left_mean = self.local2global(np.array([0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)
+        points_left_mean = self.global2cam(points_left_mean, lidar2cam)[0]
+        # right
+        xyz = np.concatenate((-0.5 * np.ones_like(xv)[:,:,np.newaxis] * w / self.resolution, xv[:,:,np.newaxis], zv[:,:,np.newaxis]), axis=-1)
+        points_right = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
+        points_right_mean = self.local2global(np.array([-0.5 * w, 0.0, 0.0]), center_lidar, yaw_lidar)
+        points_right_mean = self.global2cam(points_right_mean, lidar2cam)[0]
+        # front
+        shape_front = np.array([h / self.resolution, w / self.resolution]).astype(np.int32)
+        n, m = [(ss - 1.) / 2. for ss in shape_front]
+        y, z = np.ogrid[-m:m + 1, -n:n + 1]
+        yv, zv = np.meshgrid(y, z, sparse=False)
+        xyz = np.concatenate((yv[:,:,np.newaxis], -0.5 * np.ones_like(yv)[:,:,np.newaxis] * l / self.resolution, zv[:,:,np.newaxis]), axis=-1)
+        points_front = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
+        points_front_mean = self.local2global(np.array([0.0, -0.5 * l, 0.0]), center_lidar, yaw_lidar)
+        points_front_mean = self.global2cam(points_front_mean, lidar2cam)[0]
+        # rear
+        xyz = np.concatenate((yv[:,:,np.newaxis], 0.5 * np.ones_like(yv)[:,:,np.newaxis] * l / self.resolution, zv[:,:,np.newaxis]), axis=-1)
+        points_rear = self.local2global(xyz * self.resolution, center_lidar, yaw_lidar)
+        points_rear_mean = self.local2global(np.array([0.0, 0.5 * l, 0.0]), center_lidar, yaw_lidar)
+        points_rear_mean = self.global2cam(points_rear_mean, lidar2cam)[0]
+        surface_points.append(points_top)
+        if self.distance(points_left_mean) < self.distance(points_right_mean):
+            surface_points.append(points_left)
+        else:
+            surface_points.append(points_right)
+            
+        if self.distance(points_front_mean) < self.distance(points_rear_mean):
+            surface_points.append(points_front)
+        else:
+            surface_points.append(points_rear)                
+        surface_points = np.vstack(surface_points)
+                
+        return surface_points
+    
+    def ground_ref_points(self, image, gt_bboxes_3d, lidar2img, x_size, y_size, idx):
+        center_lidar = gt_bboxes_3d[0][:3]
+        w, l = 61.44, 40
+        shape_top = np.array([w / self.resolution, l / self.resolution]).astype(np.int32)
+        bev_img = np.zeros((shape_top[1], shape_top[0], 3))
+        bev_img = bev_img.reshape(-1, 3)
+        
+        n, m = [(ss - 1.) / 2. for ss in shape_top]
+        y, x = np.ogrid[-m:m + 1, -n:n + 1]
+        xv, yv = np.meshgrid(x, y, sparse=False)
+        xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis], (center_lidar[2] * np.ones_like(xv)[:,:,np.newaxis] / self.resolution).astype(np.int32)), axis=-1)
+        xyz = xyz + np.array([(0.5 * w + 13.0)/ self.resolution, 0.0, 0.0]).astype(np.int32).reshape(1,3)        
+        xyz_points = xyz * self.resolution
+        xyz_points = xyz_points.reshape(-1, 3)
+        
+        xyz_img = np.matmul(lidar2img, np.concatenate((xyz_points, np.ones((xyz_points.shape[0],1))), axis=1).T).T
+        xyz_img = xyz_img[:,:2] / (xyz_img[:,2] + 10e-6)[:, np.newaxis]
+        xyz_img = xyz_img.astype(np.int32)
+                
+        xyz_img_src = xyz_img.copy()
+        xyz_img_src[:,0] = np.clip(xyz_img_src[:,0], 0, x_size[idx]-1)
+        xyz_img_src[:,1] = np.clip(xyz_img_src[:,1], 0, y_size[idx]-1)
+        bev_img = image[xyz_img_src[:,1], xyz_img_src[:,0],:]
+        
+        bev_img[xyz_img[:,0] < 0, :] = 0
+        bev_img[xyz_img[:,0] > x_size[idx]-1, :] = 0
+        bev_img[xyz_img[:,1] < 0, :] = 0
+        bev_img[xyz_img[:,1] > y_size[idx]-1, :] = 0
+        bev_img = bev_img.reshape(shape_top[1], shape_top[0], 3)
+        
+        return bev_img
+    
+@PIPELINES.register_module()
+class ImageReactify(object):
+    def __init__(self, target_roll, target_pitch):
+        self.target_roll = target_roll
+        self.target_pitch = target_pitch
+
+    def equation_plane(self, points): 
+        x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
+        x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
+        x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
+        a1 = x2 - x1
+        b1 = y2 - y1
+        c1 = z2 - z1
+        a2 = x3 - x1
+        b2 = y3 - y1
+        c2 = z3 - z1
+        a = b1 * c2 - b2 * c1
+        b = a2 * c1 - a1 * c2
+        c = a1 * b2 - b1 * a2
+        d = (- a * x1 - b * y1 - c * z1)
+        return [a, b, c, d]
+    
+    def parse_roll_pitch(self, lidar2cam):
+        ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+        ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+        ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
+        denorm = self.equation_plane(ground_points_cam)
+        
+        origin_vector = np.array([0, 1.0, 0])
+        target_vector_xy = np.array([denorm[0], denorm[1], 0.0])
+        target_vector_yz = np.array([0.0, denorm[1], denorm[2]])
+        target_vector_xy = target_vector_xy / np.sqrt(target_vector_xy[0]**2 + target_vector_xy[1]**2 + target_vector_xy[2]**2)       
+        target_vector_yz = target_vector_yz / np.sqrt(target_vector_yz[0]**2 + target_vector_yz[1]**2 + target_vector_yz[2]**2)       
+        roll = math.acos(np.inner(origin_vector, target_vector_xy))
+        pitch = math.acos(np.inner(origin_vector, target_vector_yz))
+        roll = -1 * self.rad2degree(roll) if target_vector_xy[0] > 0 else self.rad2degree(roll)
+        pitch = -1 * self.rad2degree(pitch) if target_vector_yz[1] > 0 else self.rad2degree(pitch)
+        return roll, pitch
+    
+    def get_denorm(self, src_denorm_file):
+        with open(src_denorm_file, 'r') as f:
+            lines = f.readlines()
+        denorm = np.array([float(item) for item in lines[0].split(' ')])
+        return denorm
+    
+    def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,]):
+        if len(target_roll) > 1:
+            target_roll_status = np.random.uniform(target_roll[0], target_roll[1])
+        else:
+            target_roll_status = target_roll[0]
+        
+        roll = target_roll_status - roll_status        
+        roll_rad = self.degree2rad(roll)
+        rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
+                                 [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
+                                 [0, 0, 1, 0],
+                                 [0, 0, 0, 1]])
+        lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
+        lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
+        # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
+        # image = self.transform_with_M_bilinear(image, M)
+        h, w, _ = image.shape
+        center = (int(cam_intrinsic[0, 2]), int(cam_intrinsic[1, 2]))
+        M = cv2.getRotationMatrix2D(center, -1 * self.rad2degree(roll_rad), 1.0)
+        image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
+        return lidar2cam_rectify, lidar2img_rectify, image
+    
+    def reactify_pitch_params(self, lidar2cam, cam_intrinsic, pitch, target_pitch=2.0):
+        if len(target_pitch) > 1:
+            target_pitch_status = np.random.uniform(pitch + target_pitch[0], pitch + target_pitch[1])
+        else:
+            target_pitch_status = target_pitch[0]
+            
+        pitch = -1 * (target_pitch_status - pitch)
+        pitch = self.degree2rad(pitch)
+        rectify_pitch = np.array([[1, 0, 0, 0],
+                                  [0,math.cos(pitch), -math.sin(pitch), 0], 
+                                  [0,math.sin(pitch), math.cos(pitch), 0],
+                                  [0, 0, 0, 1]])
+        lidar2cam_rectify = np.matmul(rectify_pitch, lidar2cam)
+        lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
+        return lidar2cam_rectify, lidar2img_rectify
+
+    def rad2degree(self, radian):
+        return radian * 180 / np.pi
+    
+    def degree2rad(self, degree):
+        return degree * np.pi / 180
+    
+    def __call__(self, results):
+        for idx, image in enumerate(results['img']):
+            lidar2cam = results["lidar2cam"][idx].copy()            
+            cam_intrinsic = results["cam_intrinsic"][idx].copy()
+            image = results["img"][idx].copy()
+            
+            roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
+            lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
+            lidar2cam_rectify = lidar2cam_roll_rectify
+            
+            if self.target_pitch is not None and False:
+                lidar2cam_pitch_rectify, lidar2img_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, target_pitch=self.target_pitch)            
+                lidar2cam_rectify = lidar2cam_pitch_rectify
+                M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
+                image = self.transform_with_M_bilinear(image, M)
+            
+            '''    
+            roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_rectify)
+            
+            print(roll_init, pitch_init, roll_check, pitch_check)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            org = (300, 100)
+            org_1 = (300, 400)
+            fontScale = 3   
+            color = (0, 0, 255)
+            thickness = 2
+            image = cv2.putText(image, str(round(roll_check, 2)) +" " + str(round(pitch_check, 2)), org, font, 
+                    fontScale, color, thickness, cv2.LINE_AA)
+            image = cv2.putText(image, str(round(roll_init, 2)) +" " + str(round(pitch_init ,2)), org_1, font, 
+                    fontScale, color, thickness, cv2.LINE_AA)
+            if idx == 0:
+                cv2.imwrite("demo.jpg", image)
+            '''
+            results["lidar2cam"][idx] = lidar2cam_rectify
+            results["cam_intrinsic"][idx] = cam_intrinsic
+            results["lidar2img"][idx] = lidar2img_rectify
+            results["img"][idx] = image
+              
+        return results
+    
+    def get_M(self, R, K, R_r, K_r):
+        R_inv = np.linalg.inv(R)
+        K_inv = np.linalg.inv(K)
+        M = np.matmul(K_r, R_r)
+        M = np.matmul(M, R_inv)
+        M = np.matmul(M, K_inv)
+        return M
+                    
+    def transform_with_M(self, image, M):
+        image_new = np.zeros_like(image)
+        u = range(image.shape[1])
+        v = range(image.shape[0])
+        xu, yv = np.meshgrid(u, v)
+        uv = np.concatenate((xu[:,:,np.newaxis], yv[:,:,np.newaxis]), axis=2)
+        uvd = np.concatenate((uv, np.ones((uv.shape[0], uv.shape[1], 1))), axis=-1) * 10
+        uvd = uvd.reshape(-1, 3)
+        uvd_new = np.matmul(M, uvd.T).T
+        uv_new = uvd_new[:,:2] / (uvd_new[:,2][:, np.newaxis])
+        
+        uv_new_ceil = np.ceil(uv_new).astype(np.int32)
+        uv_new_ceil[:,0] = np.clip(uv_new_ceil[:,0], 0, image.shape[1]-1)
+        uv_new_ceil[:,1] = np.clip(uv_new_ceil[:,1], 0, image.shape[0]-1)
+        uv_new_ceil_flatten = uv_new_ceil.reshape(-1, 2)
+        uv_new_ceil_flatten = uv_new_ceil_flatten[:, 1] * image.shape[1] + uv_new_ceil_flatten[:, 0]
+        
+        uv_new_floor = np.floor(uv_new).astype(np.int32)
+        uv_new_floor[:,0] = np.clip(uv_new_floor[:,0], 0, image.shape[1]-1)
+        uv_new_floor[:,1] = np.clip(uv_new_floor[:,1], 0, image.shape[0]-1)
+        uv_new_floor_flatten = uv_new_floor.reshape(-1, 2)
+        uv_new_floor_flatten = uv_new_floor_flatten[:, 1] * image.shape[1] + uv_new_floor_flatten[:, 0]
+        
+        image_flatten = image.reshape(-1, 3)
+        image_new_flatten = image_new.reshape(-1, 3)
+        image_new_flatten[uv_new_floor_flatten,:] = image_flatten
+        image_new_flatten[uv_new_ceil_flatten,:] = image_flatten
+        image_new = image_new_flatten.reshape(image.shape[0], image.shape[1], image.shape[2])
+        
+        mask = (image_new_flatten[:, :] == [0, 0, 0])
+        mask = np.all(mask, axis=1)
+        mask = mask.reshape(image.shape[0], image.shape[1])
+        image_new[mask, :] = np.concatenate((image_new[:,1:,:], np.zeros((image_new.shape[0], 1, 3))), axis=1)[mask]
+        
+        return image_new
+    
+    def transform_with_M_bilinear(self, image, M):
+        u = range(image.shape[1])
+        v = range(image.shape[0])
+        xu, yv = np.meshgrid(u, v)
+        uv = np.concatenate((xu[:,:,np.newaxis], yv[:,:,np.newaxis]), axis=2)
+        uvd = np.concatenate((uv, np.ones((uv.shape[0], uv.shape[1], 1))), axis=-1) * 10
+        uvd = uvd.reshape(-1, 3)
+        
+        M = np.linalg.inv(M)
+        uvd_new = np.matmul(M, uvd.T).T
+        uv_new = uvd_new[:,:2] / (uvd_new[:,2][:, np.newaxis])
+        uv_new_mask = uv_new.copy()
+        uv_new_mask = uv_new_mask.reshape(image.shape[0], image.shape[1], 2)
+        
+        uv_new[:,0] = np.clip(uv_new[:,0], 0, image.shape[1]-2)
+        uv_new[:,1] = np.clip(uv_new[:,1], 0, image.shape[0]-2)
+        uv_new = uv_new.reshape(image.shape[0], image.shape[1], 2)
+        
+        image_new = np.zeros_like(image)
+        corr_x, corr_y = uv_new[:,:,1], uv_new[:,:,0]
+        point1 = np.concatenate((np.floor(corr_x)[:,:,np.newaxis].astype(np.int32), np.floor(corr_y)[:,:,np.newaxis].astype(np.int32)), axis=2)
+        point2 = np.concatenate((point1[:,:,0][:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
+        point3 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], point1[:,:,1][:,:,np.newaxis]), axis=2)
+        point4 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
+
+        fr1 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point1[:,:,0], point1[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point2[:,:,0], point2[:,:,1], :]
+        fr2 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point3[:,:,0], point3[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point4[:,:,0], point4[:,:,1], :]
+        image_new = (point3[:,:,0] - corr_x)[:,:,np.newaxis] * fr1 + (corr_x - point1[:,:,0])[:,:,np.newaxis] * fr2
+        
+        mask_1 = np.logical_or(uv_new_mask[:,:,0] < 0, uv_new_mask[:,:,0] > image.shape[1] -2)
+        mask_2 = np.logical_or(uv_new_mask[:,:,1] < 0, uv_new_mask[:,:,1] > image.shape[0] -2)
+        mask = np.logical_or(mask_1, mask_2)
+        image_new[mask] = [0,0,0]
+        image_new = image_new.astype(np.float32)
+        return image_new

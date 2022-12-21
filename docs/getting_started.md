@@ -6,7 +6,9 @@
 
 Train BEVFormer with 8 GPUs 
 ```
-./tools/dist_train.sh ./projects/configs/bevformer/bevformer_base.py 8
+./tools/dist_train.sh ./projects/configs/bevformer/bevformer_small.py 8
+./tools/dist_train.sh ./projects/configs/bevformer_fp16/bevformer_base.py 8
+
 ```
 
 Eval BEVFormer with 8 GPUs
