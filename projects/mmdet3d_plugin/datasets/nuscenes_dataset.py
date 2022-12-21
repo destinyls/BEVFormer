@@ -208,7 +208,7 @@ class CustomNuScenesDataset(NuScenesDataset):
                     continue
                 self.cache_flag = True
                 self.cache_flag_index = idx
-                return 
+                return data
 
     def _evaluate_single(self,
                          result_path,

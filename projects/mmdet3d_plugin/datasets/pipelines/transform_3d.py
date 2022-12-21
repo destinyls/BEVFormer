@@ -2,6 +2,10 @@ import numpy as np
 from numpy import random
 import mmcv
 import cv2
+import os
+import math
+import torch
+
 from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
 
@@ -333,7 +337,8 @@ class ProduceHeightMap(object):
     def __init__(self, resolution=0.04, back_ratio=0.05):
         self.resolution = resolution
         self.back_ratio = back_ratio
-        self.image_reatify = ImageReactify(target_roll=[0.0,], pitch_abs=None)
+        self.image_reatify = ImageReactify(target_roll=[0.0,], target_pitch=None)
+        self.count = 0
         
     def __call__(self, results):
         height_map = [np.zeros((img.shape[0], img.shape[1])) for idx, img in enumerate(results['img'])]
@@ -356,8 +361,12 @@ class ProduceHeightMap(object):
                 yaw_lidar = gt_bbox[6]
                 surface_points = self.box3d_surface(lwh, center_lidar, -yaw_lidar, lidar2cam)   
                 surface_points_list.append(surface_points)
-            surface_points = np.vstack(surface_points_list)   
+            surface_points = np.vstack(surface_points_list)
             
+            surface_points_cam = np.matmul(lidar2cam, np.concatenate((surface_points, np.ones((surface_points.shape[0],1))), axis=1).T).T
+            mask = surface_points_cam[:, 2] > 0.5
+            surface_points = surface_points[mask]
+
             surface_points_img = np.matmul(lidar2img, np.concatenate((surface_points, np.ones((surface_points.shape[0],1))), axis=1).T).T
             surface_points_img = surface_points_img[:,:2] / (surface_points_img[:,2] + 10e-6)[:, np.newaxis]
             surface_points_img = surface_points_img.astype(np.int32)
@@ -373,10 +382,12 @@ class ProduceHeightMap(object):
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
         
-        total_img = np.vstack([images[0], bev_img])
+        # total_img = np.vstack([images[0], bev_img])
+        
+        total_img = images[0]
         cv2.imwrite(os.path.join("debug", results["sample_idx"] + "_" + str(round(pitch, 2)) + ".jpg"), total_img)
-        # cv2.imwrite(os.path.join("debug", "bev_image_" + str(round(roll, 2)) + ".jpg"), bev_img)
-        cv2.imwrite(os.path.join("demo.jpg"), total_img)
+        cv2.imwrite(os.path.join("demo", str(self.count) + ".jpg"), total_img)
+        self.count = self.count + 1
         
         results['height_map'] = height_map
         return results
@@ -398,7 +409,7 @@ class ProduceHeightMap(object):
         return np.sqrt(point[0]**2 + point[1]**2 + point[2]**2)
     
     def box3d_surface(self, lwh, center_lidar, yaw_lidar, lidar2cam):
-        l, w, h = lwh[0], lwh[1], lwh[2]
+        w, l, h = lwh[0], lwh[1], lwh[2]
         surface_points = []
         # top
         shape_top = np.array([w / self.resolution, l / self.resolution]).astype(np.int32)
@@ -483,9 +494,9 @@ class ProduceHeightMap(object):
     
 @PIPELINES.register_module()
 class ImageReactify(object):
-    def __init__(self, target_roll, pitch_abs):
+    def __init__(self, target_roll, target_pitch):
         self.target_roll = target_roll
-        self.pitch_abs = pitch_abs
+        self.target_pitch = target_pitch
 
     def equation_plane(self, points): 
         x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
@@ -526,25 +537,6 @@ class ImageReactify(object):
         denorm = np.array([float(item) for item in lines[0].split(' ')])
         return denorm
     
-    def parse_roll_pitch_v2(self, sample_token, is_train=False):
-        if is_train:
-            denorm_file = os.path.join("data/rope3d/training/denorm", sample_token + ".txt")
-        else:
-            denorm_file = os.path.join("data/rope3d/validation/denorm", sample_token + ".txt")
-        
-        denorm = self.get_denorm(denorm_file)
-        denorm = -1 * denorm
-        origin_vector = np.array([0, 1.0, 0])
-        target_vector_xy = np.array([denorm[0], denorm[1], 0.0])
-        target_vector_yz = np.array([0.0, denorm[1], denorm[2]])
-        target_vector_xy = target_vector_xy / np.sqrt(target_vector_xy[0]**2 + target_vector_xy[1]**2 + target_vector_xy[2]**2)       
-        target_vector_yz = target_vector_yz / np.sqrt(target_vector_yz[0]**2 + target_vector_yz[1]**2 + target_vector_yz[2]**2)       
-        roll = math.acos(np.inner(origin_vector, target_vector_xy))
-        pitch = math.acos(np.inner(origin_vector, target_vector_yz))
-        roll = -1 * self.rad2degree(roll) if target_vector_xy[0] > 0 else self.rad2degree(roll)
-        pitch = -1 * self.rad2degree(pitch) if target_vector_yz[1] > 0 else self.rad2degree(pitch)
-        return roll, pitch
-    
     def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,]):
         if len(target_roll) > 1:
             target_roll_status = np.random.uniform(target_roll[0], target_roll[1])
@@ -559,23 +551,19 @@ class ImageReactify(object):
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
         lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
-        
-        M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
-        image = self.transform_with_M_bilinear(image, M)
-        '''
+        # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
+        # image = self.transform_with_M_bilinear(image, M)
         h, w, _ = image.shape
-        center = (w // 2, h // 2)
         center = (int(cam_intrinsic[0, 2]), int(cam_intrinsic[1, 2]))
         M = cv2.getRotationMatrix2D(center, -1 * self.rad2degree(roll_rad), 1.0)
         image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
-        '''
         return lidar2cam_rectify, lidar2img_rectify, image
     
-    def reactify_pitch_params(self, lidar2cam, cam_intrinsic, pitch, pitch_abs=2.0):
-        if len(pitch_abs) > 1:
-            target_pitch_status = np.random.uniform(pitch + pitch_abs[0], pitch + pitch_abs[1])
+    def reactify_pitch_params(self, lidar2cam, cam_intrinsic, pitch, target_pitch=2.0):
+        if len(target_pitch) > 1:
+            target_pitch_status = np.random.uniform(pitch + target_pitch[0], pitch + target_pitch[1])
         else:
-            target_pitch_status = pitch_abs[0]
+            target_pitch_status = target_pitch[0]
             
         pitch = -1 * (target_pitch_status - pitch)
         pitch = self.degree2rad(pitch)
@@ -603,14 +591,16 @@ class ImageReactify(object):
             lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
             lidar2cam_rectify = lidar2cam_roll_rectify
             
-            if self.pitch_abs is not None:
-                lidar2cam_pitch_rectify, lidar2img_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, pitch_abs=self.pitch_abs)            
+            if self.target_pitch is not None and False:
+                lidar2cam_pitch_rectify, lidar2img_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, target_pitch=self.target_pitch)            
                 lidar2cam_rectify = lidar2cam_pitch_rectify
                 M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
                 image = self.transform_with_M_bilinear(image, M)
-                
-            '''
+            
+            '''    
             roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_rectify)
+            
+            print(roll_init, pitch_init, roll_check, pitch_check)
             font = cv2.FONT_HERSHEY_SIMPLEX
             org = (300, 100)
             org_1 = (300, 400)
@@ -621,6 +611,8 @@ class ImageReactify(object):
                     fontScale, color, thickness, cv2.LINE_AA)
             image = cv2.putText(image, str(round(roll_init, 2)) +" " + str(round(pitch_init ,2)), org_1, font, 
                     fontScale, color, thickness, cv2.LINE_AA)
+            if idx == 0:
+                cv2.imwrite("demo.jpg", image)
             '''
             results["lidar2cam"][idx] = lidar2cam_rectify
             results["cam_intrinsic"][idx] = cam_intrinsic

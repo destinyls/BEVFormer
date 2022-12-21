@@ -46,7 +46,7 @@ class SelfTraining(nn.Module):
                 nn.BatchNorm1d(out_dim)
             )
         
-        self.predictor = self.layer1 = nn.Sequential(
+        self.predictor = nn.Sequential(
             nn.Linear(out_dim, pred_hidden_dim),
             nn.BatchNorm1d(pred_hidden_dim),
             nn.ReLU(inplace=True),
@@ -78,7 +78,6 @@ class SelfTraining(nn.Module):
         gt_bboxes_numpy = np.concatenate(gt_bboxes_numpy_list, axis=0) 
         
         gt_bboxes_numpy = gt_bboxes_numpy.reshape(-1, 9)
-        print("gt_bboxes_numpy: ", gt_bboxes_numpy.shape)
         gt_locs = gt_bboxes_numpy[:, :3]
         proj_ps = self.point2bevpixel(gt_locs)
         proj_ps = torch.from_numpy(proj_ps).to(device=bev_embed.device)
@@ -90,11 +89,13 @@ class SelfTraining(nn.Module):
         proj_rois = proj_rois.reshape(-1, proj_rois.shape[-1])
         proj_rois = torch.cat([roi_id, proj_rois], dim=-1)   
         
-        print("proj_rois: ", proj_rois.shape)     
         features_rois = roi_align(bev_embed, proj_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_rois = features_rois.view(bs, -1, features_rois.shape[1])
 
-        x1, x2 = features_rois[0], features_rois[1]
+        if features_rois.shape[0] == 1:
+            x1, x2 = features_rois[0], features_rois[0]
+        else:
+            x1, x2 = features_rois[0], features_rois[1]
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         

@@ -59,7 +59,6 @@ class BEVFormer(MVXTwoStageDetector):
         
         self.enable_self_training = False
         if self_training is not None:
-            print("===========>: ", self_training)
             self.simsiam = builder.build_neck(self_training)
             self.enable_self_training = True
 
@@ -71,7 +70,6 @@ class BEVFormer(MVXTwoStageDetector):
             'prev_pos': 0,
             'prev_angle': 0,
         }
-
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
