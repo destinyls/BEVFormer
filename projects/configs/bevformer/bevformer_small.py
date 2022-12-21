@@ -59,6 +59,13 @@ model = dict(
         with_cp=True, # using checkpoint to save GPU memory
         dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False), # original DCNv2 will print log when perform load_state_dict
         stage_with_dcn=(False, False, True, True)),
+    self_training=dict(
+        type='SelfTraining',
+        in_dim=256,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+    ),
     img_neck=dict(
         type='FPN',
         in_channels=[2048],
@@ -67,13 +74,6 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
-    self_training=dict(
-        type='SelfTraining',
-        in_dim=256,
-        pc_range=point_cloud_range,
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,
@@ -215,7 +215,7 @@ test_pipeline = [
 
 data = dict(
     samples_per_gpu=2,
-    workers_per_gpu=8,
+    workers_per_gpu=4,
     train=dict(
         type=dataset_type,
         data_root=data_root,

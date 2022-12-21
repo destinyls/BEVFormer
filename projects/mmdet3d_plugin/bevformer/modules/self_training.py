@@ -59,6 +59,8 @@ class SelfTraining(nn.Module):
         self.real_w = self.pc_range[3] - self.pc_range[0]
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
+        
+        self.gt_bboxes_numpy = np.ones((2, 9))
 
     def forward(self, bev_embed, gt_bboxes_list): 
         bev_embed = bev_embed.permute(1, 0, 2).contiguous()
@@ -78,6 +80,7 @@ class SelfTraining(nn.Module):
         gt_bboxes_numpy = np.concatenate(gt_bboxes_numpy_list, axis=0) 
         
         gt_bboxes_numpy = gt_bboxes_numpy.reshape(-1, 9)
+        
         gt_locs = gt_bboxes_numpy[:, :3]
         proj_ps = self.point2bevpixel(gt_locs)
         proj_ps = torch.from_numpy(proj_ps).to(device=bev_embed.device)
@@ -92,10 +95,10 @@ class SelfTraining(nn.Module):
         features_rois = roi_align(bev_embed, proj_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_rois = features_rois.view(bs, -1, features_rois.shape[1])
 
-        if features_rois.shape[0] == 1:
-            x1, x2 = features_rois[0], features_rois[0]
-        else:
-            x1, x2 = features_rois[0], features_rois[1]
+        x1, x2 = features_rois[0], features_rois[1]
+        if x1.shape[0] == 1:
+            x1 = x1.repeat(2, 1)
+            x2 = x2.repeat(2, 1)
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         
