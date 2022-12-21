@@ -1,7 +1,7 @@
 import numpy as np
 from numpy import random
 import mmcv
-import cv
+import cv2
 from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
 

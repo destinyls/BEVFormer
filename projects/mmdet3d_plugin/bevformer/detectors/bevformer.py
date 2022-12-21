@@ -49,7 +49,7 @@ class BEVFormer(MVXTwoStageDetector):
         super(BEVFormer,
               self).__init__(pts_voxel_layer, pts_voxel_encoder,
                              pts_middle_encoder, pts_fusion_layer,
-                             img_backbone, pts_backbone, img_neck, pts_neck, self_training,
+                             img_backbone, pts_backbone, img_neck, pts_neck,
                              pts_bbox_head, img_roi_head, img_rpn_head,
                              train_cfg, test_cfg, pretrained)
         self.grid_mask = GridMask(
@@ -59,6 +59,7 @@ class BEVFormer(MVXTwoStageDetector):
         
         self.enable_self_training = False
         if self_training is not None:
+            print("===========>: ", self_training)
             self.simsiam = builder.build_neck(self_training)
             self.enable_self_training = True
 

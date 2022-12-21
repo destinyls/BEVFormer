@@ -27,8 +27,11 @@ class CustomNuScenesDataset(NuScenesDataset):
         self.queue_length = queue_length
         self.overlap_test = overlap_test
         self.bev_size = bev_size
+
+        self.cache_flag = False
+        self.cache_flag_index = -1
         
-    def prepare_train_data(self, index):
+    def prepare_train_data(self, index, is_cache=False):
         """
         Training data preparation.
         Args:
@@ -47,6 +50,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         input_dict = self.get_data_info(index)
         if input_dict is None:
             return None
+        input_dict['cache_sample'] = True if is_cache else False
         frame_idx = input_dict['frame_idx']
         scene_token = input_dict['scene_token']
         self.pre_pipeline(input_dict)
@@ -191,13 +195,20 @@ class CustomNuScenesDataset(NuScenesDataset):
         """
         if self.test_mode:
             return self.prepare_test_data(idx)
-        while True:
 
-            data = self.prepare_train_data(idx)
-            if data is None:
-                idx = self._rand_another(idx)
-                continue
-            return data
+        while True:
+            if self.cache_flag:
+                data = self.prepare_train_data(self.cache_flag_index, True)
+                self.cache_flag = False
+                return data
+            else:
+                data = self.prepare_train_data(idx, False)                
+                if data is None:
+                    idx = self._rand_another(idx)
+                    continue
+                self.cache_flag = True
+                self.cache_flag_index = idx
+                return 
 
     def _evaluate_single(self,
                          result_path,
