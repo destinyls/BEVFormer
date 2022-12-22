@@ -28,7 +28,11 @@ class CustomNuScenesDataset(NuScenesDataset):
         self.overlap_test = overlap_test
         self.bev_size = bev_size
         
-    def prepare_train_data(self, index):
+        self.cache_flag = False
+        self.cache_flag_index = -1
+        self.cache_flag_index_list = None
+        
+    def prepare_train_data(self, index, index_list=None, is_cache=False):    
         """
         Training data preparation.
         Args:
@@ -37,22 +41,26 @@ class CustomNuScenesDataset(NuScenesDataset):
             dict: Training data dict of the corresponding index.
         """
         queue = []
-        index_list = list(range(index-self.queue_length, index))
-        random.shuffle(index_list)
-        index_list = sorted(index_list[1:])
-        index_list.append(index)
+        
+        if index_list is None:
+            index_list = list(range(index-self.queue_length, index))
+            random.shuffle(index_list)
+            index_list = sorted(index_list[1:])
+            index_list.append(index)
+
         for i in index_list:
             i = max(0, i)
             input_dict = self.get_data_info(i)
             if input_dict is None:
-                return None
+                return None, None
+            input_dict['cache_sample'] = True if is_cache else False
             self.pre_pipeline(input_dict)
             example = self.pipeline(input_dict)
             if self.filter_empty_gt and \
                     (example is None or ~(example['gt_labels_3d']._data != -1).any()):
-                return None
+                return None, None
             queue.append(example)
-        return self.union2one(queue)
+        return self.union2one(queue), index_list
 
 
     def union2one(self, queue):
@@ -174,12 +182,19 @@ class CustomNuScenesDataset(NuScenesDataset):
         if self.test_mode:
             return self.prepare_test_data(idx)
         while True:
-
-            data = self.prepare_train_data(idx)
-            if data is None:
-                idx = self._rand_another(idx)
-                continue
-            return data
+            if self.cache_flag:
+                data, _ = self.prepare_train_data(self.cache_flag_index, self.cache_flag_index_list, True)
+                self.cache_flag = False
+                return data
+            else:
+                data, index_list = self.prepare_train_data(idx)                
+                if data is None:
+                    idx = self._rand_another(idx)
+                    continue
+                self.cache_flag = True
+                self.cache_flag_index = idx
+                self.cache_flag_index_list = index_list
+                return data
 
     def _evaluate_single(self,
                          result_path,

@@ -67,6 +67,13 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    self_training=dict(
+        type='SelfTraining',
+        in_dim=256,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,
@@ -176,6 +183,7 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
+    dict(type='ImageReactify', target_roll=[-8.0, 8.0], target_pitch=[0.0]),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
@@ -206,8 +214,8 @@ test_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=1,
-    workers_per_gpu=4,
+    samples_per_gpu=2,
+    workers_per_gpu=2,
     train=dict(
         type=dataset_type,
         data_root=data_root,
