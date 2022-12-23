@@ -541,13 +541,16 @@ class ImageReactify(object):
         denorm = np.array([float(item) for item in lines[0].split(' ')])
         return denorm
     
-    def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,]):
+    def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,], cache_sample=False):
         if len(target_roll) > 1:
             target_roll_status = np.random.uniform(target_roll[0], target_roll[1])
         else:
             target_roll_status = target_roll[0]
         
-        roll = target_roll_status - roll_status        
+        if cache_sample:
+            roll = target_roll_status - roll_status     
+        else:
+            roll = 0.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -590,9 +593,9 @@ class ImageReactify(object):
             lidar2cam = results["lidar2cam"][idx].copy()            
             cam_intrinsic = results["cam_intrinsic"][idx].copy()
             image = results["img"][idx].copy()
-            
+                        
             roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
-            lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll)
+            lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll, cache_sample=results['cache_sample'])
             lidar2cam_rectify = lidar2cam_roll_rectify
             
             if self.target_pitch is not None and False:

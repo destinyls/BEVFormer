@@ -69,6 +69,13 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    self_training=dict(
+        type='SelfTraining',
+        in_dim=256,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,
