@@ -17,6 +17,7 @@ plugin_dir = 'projects/mmdet3d_plugin/'
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
 point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+# point_cloud_range = [-51.2, 0.0, -5.0, 51.2, 102.4, 3.0]
 voxel_size = [0.2, 0.2, 8]
 
 
@@ -143,6 +144,7 @@ model = dict(
         bbox_coder=dict(
             type='NMSFreeCoder',
             post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+            # post_center_range=[-61.2, 0.0, -10.0, 61.2, 122.4, 10.0],
             pc_range=point_cloud_range,
             max_num=300,
             voxel_size=voxel_size,
@@ -187,6 +189,7 @@ train_pipeline = [
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
+    # dict(type='ProduceHeightMap', resolution=0.04, back_ratio=0.05),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.8]),
     dict(type='PadMultiViewImage', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),

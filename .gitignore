@@ -9,6 +9,8 @@ __pycache__/
 *.swp
 # Distribution / packaging
 .Python
+demo/
+demo_bev/
 build/
 ckpts/
 data/

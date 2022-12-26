@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -62,7 +62,7 @@ class SelfTraining(nn.Module):
         
         self.gt_bboxes_numpy = np.ones((2, 9))
 
-    def forward(self, bev_embed, gt_bboxes_list): 
+    def forward(self, bev_embed, gt_bboxes_list, sample_idx): 
         bev_embed = bev_embed.permute(1, 0, 2).contiguous()
         bs = bev_embed.shape[0]
         bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1)
@@ -83,6 +83,11 @@ class SelfTraining(nn.Module):
         
         gt_locs = gt_bboxes_numpy[:, :3]
         proj_ps = self.point2bevpixel(gt_locs)
+        '''
+        bev_embed_debug = torch.sum(bev_embed[0], dim=0).detach().cpu().numpy() * 1000
+        bev_embed_debug[proj_ps[:,1], proj_ps[:,0]] = 255
+        cv2.imwrite(os.path.join("demo_bev", sample_idx + ".jpg"), bev_embed_debug)
+        '''     
         proj_ps = torch.from_numpy(proj_ps).to(device=bev_embed.device)
         proj_ps = proj_ps.view(bs, -1, 2)
         
@@ -110,10 +115,10 @@ class SelfTraining(nn.Module):
         self.real_h = self.pc_range[4] - self.pc_range[1]
         pixels_w = (points[:, 0] - self.pc_range[0]) / self.grid_length[1]
         pixels_h = (points[:, 1] - self.pc_range[1]) / self.grid_length[0]
-        pixels = np.concatenate((pixels_h[:, np.newaxis], pixels_w[:, np.newaxis]), axis=-1)
+        pixels = np.concatenate((pixels_w[:, np.newaxis], pixels_h[:, np.newaxis]), axis=-1)
         pixels = pixels.astype(np.int32)
-        pixels[:, 0] = np.clip(pixels[:, 0], 0, self.bev_h-1)
-        pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_w-1)
+        pixels[:, 0] = np.clip(pixels[:, 0], 0, self.bev_w-1)
+        pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_h-1)
         return pixels
     
     def object_corners(self, locs, lwh, yaw):        

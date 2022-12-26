@@ -143,7 +143,7 @@ class BEVFormer(MVXTwoStageDetector):
         losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
         
         if self.enable_self_training:
-            loss_simsiam = self.simsiam(outs["bev_embed"], gt_bboxes_3d)
+            loss_simsiam = self.simsiam(outs["bev_embed"], gt_bboxes_3d, img_metas[0]["sample_idx"])
             losses["simsiam_loss"] = loss_simsiam
         return losses
 

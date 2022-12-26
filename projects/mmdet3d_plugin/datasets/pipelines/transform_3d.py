@@ -384,14 +384,11 @@ class ProduceHeightMap(object):
         # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
-        
         # total_img = np.vstack([images[0], bev_img])
         
-        total_img = images[0]
-        cv2.imwrite(os.path.join("debug", results["sample_idx"] + "_" + str(round(pitch, 2)) + ".jpg"), total_img)
-        cv2.imwrite(os.path.join("demo", str(self.count) + ".jpg"), total_img)
+        # total_img = images[0]
+        cv2.imwrite(os.path.join("demo", results["sample_idx"] + ".jpg"), images[0])
         self.count = self.count + 1
-        
         results['height_map'] = height_map
         return results
     
@@ -547,7 +544,7 @@ class ImageReactify(object):
         else:
             target_roll_status = target_roll[0]
         
-        if cache_sample:
+        if random.random() < 0.5:
             roll = target_roll_status - roll_status     
         else:
             roll = 0.0
