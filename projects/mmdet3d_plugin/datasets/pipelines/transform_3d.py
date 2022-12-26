@@ -340,7 +340,6 @@ class ProduceHeightMap(object):
     def __init__(self, resolution=0.04, back_ratio=0.05):
         self.resolution = resolution
         self.back_ratio = back_ratio
-        self.image_reatify = ImageReactify(target_roll=[0.0,], target_pitch=None)
         self.count = 0
         
     def __call__(self, results):
@@ -380,7 +379,6 @@ class ProduceHeightMap(object):
             height_map[idx][surface_points_img[:,1], surface_points_img[:,0]] = height
             
             images[idx][surface_points_img[:,1], surface_points_img[:,0]] = (255,0,0)
-            roll, pitch = self.image_reatify.parse_roll_pitch(lidar2cam)
         # frame_idx = results["sample_idx"].split('/')[1].split('.')[0]        
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_" + str(round(roll, 2)) + ".jpg"), images[0])
         # cv2.imwrite(os.path.join("debug", frame_idx + "_K_bev_img_" + str(round(roll, 2)) + ".jpg"), bev_img)
@@ -495,9 +493,10 @@ class ProduceHeightMap(object):
     
 @PIPELINES.register_module()
 class ImageReactify(object):
-    def __init__(self, target_roll, target_pitch):
-        self.target_roll = target_roll
-        self.target_pitch = target_pitch
+    def __init__(self, ratio_range, roll_range, pitch_range):
+        self.roll_range = roll_range
+        self.pitch_range = pitch_range
+        self.ratio_range = ratio_range
 
     def equation_plane(self, points): 
         x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
@@ -538,16 +537,8 @@ class ImageReactify(object):
         denorm = np.array([float(item) for item in lines[0].split(' ')])
         return denorm
     
-    def reactify_roll_params(self, lidar2cam, cam_intrinsic, image, roll_status, target_roll=[-0.48,], cache_sample=False):
-        if len(target_roll) > 1:
-            target_roll_status = np.random.uniform(target_roll[0], target_roll[1])
-        else:
-            target_roll_status = target_roll[0]
-        
-        if random.random() < 0.5:
-            roll = target_roll_status - roll_status     
-        else:
-            roll = 0.0
+    def reactify_roll_params(self, image, lidar2cam, cam_intrinsic):        
+        roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -555,21 +546,14 @@ class ImageReactify(object):
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
         lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
-        # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
-        # image = self.transform_with_M_bilinear(image, M)
         h, w, _ = image.shape
         center = (int(cam_intrinsic[0, 2]), int(cam_intrinsic[1, 2]))
         M = cv2.getRotationMatrix2D(center, -1 * self.rad2degree(roll_rad), 1.0)
         image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
         return lidar2cam_rectify, lidar2img_rectify, image
     
-    def reactify_pitch_params(self, lidar2cam, cam_intrinsic, pitch, target_pitch=2.0):
-        if len(target_pitch) > 1:
-            target_pitch_status = np.random.uniform(pitch + target_pitch[0], pitch + target_pitch[1])
-        else:
-            target_pitch_status = target_pitch[0]
-            
-        pitch = -1 * (target_pitch_status - pitch)
+    def reactify_pitch_params(self, image, lidar2cam, cam_intrinsic):
+        pitch = np.random.uniform(self.pitch_range[0], self.pitch_range[1])            
         pitch = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch), -math.sin(pitch), 0], 
@@ -577,7 +561,40 @@ class ImageReactify(object):
                                   [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_pitch, lidar2cam)
         lidar2img_rectify = (cam_intrinsic @ lidar2cam_rectify)
-        return lidar2cam_rectify, lidar2img_rectify
+
+        M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic[:3,:3])
+        center = cam_intrinsic[:2, 2]  # w, h
+        center_ref = np.array([center[0], center[1], 1.0])
+        center_ref = np.matmul(M, center_ref.T)[:2]
+        transform_pitch = int(center_ref[1] - center[1])
+        translation_matrix = np.array([
+            [1, 0, 0],
+            [0, 1, transform_pitch]
+        ], dtype=np.float32)
+        h, w, _ = image.shape
+        image = cv2.warpAffine(src=image, M=translation_matrix, dsize=(w, h))
+        return lidar2cam_rectify, lidar2img_rectify, image
+    
+    def reactify_ratio_params(self, image, cam_intrinsic):
+        ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
+        cam_intrinsic_rectify = cam_intrinsic.copy()
+        cam_intrinsic_rectify[:2,:2] = cam_intrinsic[:2,:2] * ratio
+        
+        center = cam_intrinsic[:2, 2].astype(np.int32) 
+        center = (int(center[0]), int(center[1]))
+        H, W, _ = image.shape
+        new_W, new_H = (int(W * ratio), int(H * ratio))    
+        img = cv2.resize(image, (new_W, new_H), cv2.INTER_AREA)
+        h_min = int(center[1] * abs(1.0 - ratio))
+        w_min = int(center[0] * abs(1.0 - ratio))
+        
+        if ratio <= 1.0:
+            image = np.zeros_like(image)
+            image[h_min:h_min + new_H, w_min:w_min + new_W, :] = img     
+        else:
+            image = img[h_min:h_min + H, w_min:w_min + W, :]
+        return cam_intrinsic_rectify, image
+            
 
     def rad2degree(self, radian):
         return radian * 180 / np.pi
@@ -587,22 +604,24 @@ class ImageReactify(object):
     
     def __call__(self, results):
         for idx, image in enumerate(results['img']):
-            lidar2cam = results["lidar2cam"][idx].copy()            
+            lidar2cam = results["lidar2cam"][idx].copy()
+            lidar2img = results["lidar2img"][idx].copy()            
+         
             cam_intrinsic = results["cam_intrinsic"][idx].copy()
             image = results["img"][idx].copy()
-                        
-            roll_init, pitch_init = self.parse_roll_pitch(lidar2cam)
-            lidar2cam_roll_rectify, lidar2img_rectify, image = self.reactify_roll_params(lidar2cam, cam_intrinsic, image, roll_init, target_roll=self.target_roll, cache_sample=results['cache_sample'])
-            lidar2cam_rectify = lidar2cam_roll_rectify
             
-            if self.target_pitch is not None and False:
-                lidar2cam_pitch_rectify, lidar2img_rectify = self.reactify_pitch_params(lidar2cam_roll_rectify, cam_intrinsic, pitch_init, target_pitch=self.target_pitch)            
-                lidar2cam_rectify = lidar2cam_pitch_rectify
-                M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
-                image = self.transform_with_M_bilinear(image, M)
-            
+            if results["cache_sample"]:
+                cam_intrinsic, image = self.reactify_ratio_params(image, cam_intrinsic)
+                lidar2cam_rectify, lidar2img_rectify, image = self.reactify_roll_params(image, lidar2cam, cam_intrinsic)
+                lidar2cam_rectify, lidar2img_rectify, image = self.reactify_pitch_params(image, lidar2cam_rectify, cam_intrinsic)                        
+            else:
+                lidar2cam_rectify, lidar2img_rectify = lidar2cam, lidar2img
+                
             '''    
             roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_rectify)
+            
+            M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
+            image = self.transform_with_M_bilinear(image, M)
             
             print(roll_init, pitch_init, roll_check, pitch_check)
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -632,42 +651,6 @@ class ImageReactify(object):
         M = np.matmul(M, R_inv)
         M = np.matmul(M, K_inv)
         return M
-                    
-    def transform_with_M(self, image, M):
-        image_new = np.zeros_like(image)
-        u = range(image.shape[1])
-        v = range(image.shape[0])
-        xu, yv = np.meshgrid(u, v)
-        uv = np.concatenate((xu[:,:,np.newaxis], yv[:,:,np.newaxis]), axis=2)
-        uvd = np.concatenate((uv, np.ones((uv.shape[0], uv.shape[1], 1))), axis=-1) * 10
-        uvd = uvd.reshape(-1, 3)
-        uvd_new = np.matmul(M, uvd.T).T
-        uv_new = uvd_new[:,:2] / (uvd_new[:,2][:, np.newaxis])
-        
-        uv_new_ceil = np.ceil(uv_new).astype(np.int32)
-        uv_new_ceil[:,0] = np.clip(uv_new_ceil[:,0], 0, image.shape[1]-1)
-        uv_new_ceil[:,1] = np.clip(uv_new_ceil[:,1], 0, image.shape[0]-1)
-        uv_new_ceil_flatten = uv_new_ceil.reshape(-1, 2)
-        uv_new_ceil_flatten = uv_new_ceil_flatten[:, 1] * image.shape[1] + uv_new_ceil_flatten[:, 0]
-        
-        uv_new_floor = np.floor(uv_new).astype(np.int32)
-        uv_new_floor[:,0] = np.clip(uv_new_floor[:,0], 0, image.shape[1]-1)
-        uv_new_floor[:,1] = np.clip(uv_new_floor[:,1], 0, image.shape[0]-1)
-        uv_new_floor_flatten = uv_new_floor.reshape(-1, 2)
-        uv_new_floor_flatten = uv_new_floor_flatten[:, 1] * image.shape[1] + uv_new_floor_flatten[:, 0]
-        
-        image_flatten = image.reshape(-1, 3)
-        image_new_flatten = image_new.reshape(-1, 3)
-        image_new_flatten[uv_new_floor_flatten,:] = image_flatten
-        image_new_flatten[uv_new_ceil_flatten,:] = image_flatten
-        image_new = image_new_flatten.reshape(image.shape[0], image.shape[1], image.shape[2])
-        
-        mask = (image_new_flatten[:, :] == [0, 0, 0])
-        mask = np.all(mask, axis=1)
-        mask = mask.reshape(image.shape[0], image.shape[1])
-        image_new[mask, :] = np.concatenate((image_new[:,1:,:], np.zeros((image_new.shape[0], 1, 3))), axis=1)[mask]
-        
-        return image_new
     
     def transform_with_M_bilinear(self, image, M):
         u = range(image.shape[1])

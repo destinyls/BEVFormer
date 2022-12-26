@@ -185,7 +185,7 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    dict(type='ImageReactify', target_roll=[-8.0, 8.0], target_pitch=[0.0]),
+    dict(type='ImageReactify', ratio_range=[0.85, 1.15], roll_range=[-6.0, 6.0], pitch_range=[-2.0, 2.0]),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
