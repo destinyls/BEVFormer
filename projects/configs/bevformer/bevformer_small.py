@@ -177,7 +177,7 @@ model = dict(
             pc_range=point_cloud_range))))
 
 dataset_type = 'CustomNuScenesDataset'
-data_root = 'data/nuscenes/'
+data_root = '/data/usr/lei.yang/BEVFormer/data/nuscenes/'
 file_client_args = dict(backend='disk')
 
 
@@ -268,7 +268,7 @@ total_epochs = 24
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
-load_from = 'ckpts/r101_dcn_fcos3d_pretrain.pth'
+load_from = '/data/usr/lei.yang/BEVFormer/ckpts/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
     interval=10,
     hooks=[

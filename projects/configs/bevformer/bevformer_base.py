@@ -59,6 +59,13 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=4,
         relu_before_extra_convs=True),
+    self_training=dict(
+        type='SelfTraining',
+        in_dim=256,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+    ),
     pts_bbox_head=dict(
         type='BEVFormerHead',
         bev_h=bev_h_,
@@ -160,7 +167,7 @@ model = dict(
             pc_range=point_cloud_range))))
 
 dataset_type = 'CustomNuScenesDataset'
-data_root = 'data/nuscenes/'
+data_root = '/data/usr/lei.yang/BEVFormer/data/nuscenes/'
 file_client_args = dict(backend='disk')
 
 
@@ -168,6 +175,7 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
+    dict(type='ImageReactify', ratio_range=[0.85, 1.15], roll_range=[-6.0, 6.0], pitch_range=[-2.0, 2.0]),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
@@ -246,7 +254,7 @@ total_epochs = 24
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
-load_from = 'ckpts/r101_dcn_fcos3d_pretrain.pth'
+load_from = '/data/usr/lei.yang/BEVFormer/ckpts/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
     interval=50,
     hooks=[
