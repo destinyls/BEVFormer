@@ -1,4 +1,5 @@
 import cv2
+import math
 import numpy as np
 import os
 import torch
@@ -44,39 +45,28 @@ class SelfTraining(nn.Module):
         self.real_w = self.pc_range[3] - self.pc_range[0]
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
-                
-        self.predictor = nn.Sequential(
-            nn.Linear(in_dim, pred_hidden_dim),
-            nn.BatchNorm1d(pred_hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(pred_hidden_dim, out_dim)
-        )
 
     def forward(self, bev_embed, gt_bboxes_list, sample_idx): 
-        
         bs = len(gt_bboxes_list)
         ids1 = np.arange(0, bs, 2)
         ids2 = np.arange(1, bs + 1, 2)  
         
         bev_embed = bev_embed.permute(1, 0, 2).contiguous()
         bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1)
-        bev_embed = bev_embed.permute(0, 3, 1, 2).contiguous()
-
-        pixel_points = self.bev_voxels(num_voxels=[50, 50])
-        pixel_points = torch.from_numpy(pixel_points).to(device=bev_embed.device)
-        pixel_points = pixel_points.view(1, -1, 2).repeat(bs, 1, 1)
-        pixel_rois = torch.cat([pixel_points - 1, pixel_points + 1], dim=-1)
-        batch_id = torch.arange(bs, dtype=torch.float, device=bev_embed.device).unsqueeze(1)
-        batch_id = batch_id.repeat(1, pixel_rois.shape[1]).view(-1, 1)
-        pixel_rois = torch.cat([batch_id, pixel_rois.view(-1, 4)], dim=-1)
-        features_pixel_rois = roi_align(bev_embed, pixel_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        features_pixel_rois = features_pixel_rois.view(bs, -1, features_pixel_rois.shape[1])
+        features1, features2 = bev_embed[ids1], bev_embed[ids2]
         
-        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]
-        x1 = x1.view(-1, x1.shape[-1])
-        x2 = x2.view(-1, x2.shape[-1])
-        z1, z2 = self.predictor(x1), self.predictor(x2)
-        loss = D(x1, z2) / 2 + D(z1, x2) / 2
+        bbox_mask = self.get_bbox_mask(gt_bboxes_list, resolution=0.2)
+        
+        bbox_mask_demo = bbox_mask.astype(np.int32)[0] * 255
+        bbox_mask_demo = bbox_mask_demo[:,:,np.newaxis]
+        bbox_mask_demo = np.repeat(bbox_mask_demo, 3, axis=2)
+        cv2.imwrite(os.path.join("bbox_mask_demo", str(sample_idx) + ".jpg"), bbox_mask_demo)
+        
+        bbox_mask = torch.from_numpy(bbox_mask).to(device=bev_embed.device)
+        bbox_mask = bbox_mask.float()  # [B, H, W]
+        x1, x2 = features1 * bbox_mask.unsqueeze(-1), features2 * bbox_mask.unsqueeze(-1)
+        x1, x2 = x1.view(-1, x1.shape[-1]), x2.view(-1, x2.shape[-1])
+        loss = MSE(x1, x2) / 2 + MSE(x2, x1) / 2
         
         return loss
     
@@ -91,20 +81,6 @@ class SelfTraining(nn.Module):
         pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_h-1)
         return pixels
     
-    def object_corners(self, locs, lwh, yaw):        
-        l, w = lwh[:, 0][:, np.newaxis], lwh[:, 1][:, np.newaxis]
-        x_corners = np.concatenate((l / 2, l / 2, -l / 2, -l / 2), axis=-1)[:,:,np.newaxis]
-        y_corners = np.concatenate((w / 2, -w / 2, -w / 2, w / 2), axis=-1)[:,:,np.newaxis]
-        corners = np.concatenate((x_corners, y_corners), axis=-1)
-        locs = np.repeat(locs[:, np.newaxis, ], [4], axis=1)
-        yaw = np.repeat(yaw[:, np.newaxis], [4], axis=1)
-        sinyaw, cosyaw = np.sin(yaw), np.cos(yaw)
-        corners_x = corners[:,:,0] * sinyaw - corners[:,:,1] * cosyaw
-        corners_y = corners[:,:,0] * sinyaw + corners[:,:,1] * cosyaw
-        corners = np.concatenate((corners_x[:,:,np.newaxis], corners_y[:,:,np.newaxis]), axis=-1)
-        corners = corners + locs[:,:,:2]
-        return corners   # [num, 4, 2]
-    
     def bev_voxels(self, num_voxels):
         u, v = np.ogrid[0:num_voxels[0], 0:num_voxels[1]]
         uu, vv = np.meshgrid(u, v, sparse=False)
@@ -112,6 +88,37 @@ class SelfTraining(nn.Module):
         uv = np.concatenate((uu[:,:,np.newaxis], vv[:,:,np.newaxis]), axis=-1)
         uv = uv * voxel_size + 0.5 * voxel_size
         return uv.astype(np.float32)
+    
+    def local2global(self, points, center_lidar, yaw_lidar):
+        points_3d_lidar = points.reshape(-1, 3)
+        rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
+                            [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
+                            [0, 0, 1]])
+        points_3d_lidar = np.matmul(rot_mat, points_3d_lidar.T).T + center_lidar
+        return points_3d_lidar
+    
+    def get_bbox_mask(self, gt_bboxes_list, resolution=0.5):
+        bbox_mask = np.ones((len(gt_bboxes_list), self.bev_h, self.bev_w), dtype=np.float) * 0.1
+        
+        device = gt_bboxes_list[0].device
+        gt_boxes = [torch.cat(
+            (gt_bbox.gravity_center, gt_bbox.tensor[:, 3:]),
+            dim=1).to(device) for gt_bbox in gt_bboxes_list] 
+        for batch_id in range(len(gt_boxes)):
+            gt_bbox = gt_boxes[batch_id].cpu().numpy()
+            if gt_bbox.shape[0] == 0:
+                continue
+            for obj_id in range(gt_bbox.shape[0]):
+                loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
+                shape = np.array([lwh[1] / resolution, lwh[0] / resolution]).astype(np.int32)
+                n, m = [(ss - 1.) / 2. for ss in shape]
+                x, y = np.ogrid[-m:m + 1, -n:n + 1]
+                xv, yv = np.meshgrid(x, y, sparse=False)
+                xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis], np.ones_like(xv)[:,:,np.newaxis]), axis=-1)
+                obj_points = self.local2global(xyz * resolution, loc, rot_y)
+                obj_pixels = self.point2bevpixel(obj_points)
+                bbox_mask[batch_id, obj_pixels[:, 1], obj_pixels[:, 0]] = 1.0
+        return bbox_mask
     
     def box_level_ssl(self, bev_embed, gt_bboxes_list):
         bs = bev_embed.shape[0]
