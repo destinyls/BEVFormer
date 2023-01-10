@@ -11,6 +11,7 @@ __pycache__/
 .Python
 demo/
 demo_bev/
+bbox_mask_demo/
 build/
 ckpts/
 data/

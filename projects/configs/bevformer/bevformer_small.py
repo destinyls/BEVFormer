@@ -193,7 +193,7 @@ train_pipeline = [
     dict(type='RandomScaleImageMultiViewImage', scales=[0.8]),
     dict(type='PadMultiViewImage', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img'])
+    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img', 'img_pair'])
 ]
 
 test_pipeline = [
@@ -217,8 +217,8 @@ test_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=16,
+    samples_per_gpu=1,
+    workers_per_gpu=8,
     train=dict(
         type=dataset_type,
         data_root=data_root,

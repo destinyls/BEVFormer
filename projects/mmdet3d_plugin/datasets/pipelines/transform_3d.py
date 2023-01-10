@@ -9,8 +9,13 @@ import torch
 import numpy as np
 from numpy import random
 import mmcv
-from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
+
+from mmdet.datasets.builder import PIPELINES
+from mmdet.datasets.pipelines import to_tensor
+
+from mmdet3d.core.bbox import BaseInstance3DBoxes
+from mmdet3d.core.points import BasePoints
 
 @PIPELINES.register_module()
 class PadMultiViewImage(object):
@@ -37,9 +42,15 @@ class PadMultiViewImage(object):
         if self.size is not None:
             padded_img = [mmcv.impad(
                 img, shape=self.size, pad_val=self.pad_val) for img in results['img']]
+            if "img_pair" in results.keys():
+                padded_img_pair = [mmcv.impad(
+                    img, shape=self.size, pad_val=self.pad_val) for img in results['img_pair']]
         elif self.size_divisor is not None:
             padded_img = [mmcv.impad_to_multiple(
                 img, self.size_divisor, pad_val=self.pad_val) for img in results['img']]
+            if "img_pair" in results.keys():
+                padded_img_pair = [mmcv.impad_to_multiple(
+                    img, self.size_divisor, pad_val=self.pad_val) for img in results['img_pair']]
         
         results['ori_shape'] = [img.shape for img in results['img']]
         results['img'] = padded_img
@@ -47,6 +58,8 @@ class PadMultiViewImage(object):
         results['pad_shape'] = [img.shape for img in padded_img]
         results['pad_fixed_size'] = self.size
         results['pad_size_divisor'] = self.size_divisor
+        if "img_pair" in results.keys():
+            results['img_pair'] = padded_img_pair
 
     def __call__(self, results):
         """Call function to pad images, masks, semantic segmentation maps.
@@ -93,6 +106,8 @@ class NormalizeMultiviewImage(object):
         """
 
         results['img'] = [mmcv.imnormalize(img, self.mean, self.std, self.to_rgb) for img in results['img']]
+        if "img_pair" in results.keys():
+            results['img_pair'] = [mmcv.imnormalize(img, self.mean, self.std, self.to_rgb) for img in results['img_pair']]
         results['img_norm_cfg'] = dict(
             mean=self.mean, std=self.std, to_rgb=self.to_rgb)
         return results
@@ -203,7 +218,6 @@ class PhotoMetricDistortionMultiViewImage:
         return repr_str
 
 
-
 @PIPELINES.register_module()
 class CustomCollect3D(object):
     """Collect data from the loader relevant to the specific task.
@@ -251,7 +265,7 @@ class CustomCollect3D(object):
 
     def __init__(self,
                  keys,
-                 meta_keys=('filename', 'ori_shape', 'img_shape', 'lidar2img',
+                 meta_keys=('filename', 'ori_shape', 'img_shape', 'lidar2img', 'lidar2img_pair',
                             'depth2img', 'cam2img', 'pad_shape',
                             'scale_factor', 'flip', 'pcd_horizontal_flip',
                             'pcd_vertical_flip', 'box_mode_3d', 'box_type_3d',
@@ -323,6 +337,11 @@ class RandomScaleImageMultiViewImage(object):
                           enumerate(results['img'])]
         lidar2img = [scale_factor @ l2i for l2i in results['lidar2img']]
         results['lidar2img'] = lidar2img
+        if "img_pair" in results.keys():
+            results['img_pair'] = [mmcv.imresize(img, (x_size[idx], y_size[idx]), return_scale=False) for idx, img in
+                            enumerate(results['img_pair'])]
+            lidar2img_pair = [scale_factor @ l2i for l2i in results['lidar2img_pair']]
+            results['lidar2img_pair'] = lidar2img_pair
         results['img_shape'] = [img.shape for img in results['img']]
         results['ori_shape'] = [img.shape for img in results['img']]
 
@@ -603,45 +622,33 @@ class ImageReactify(object):
         return degree * np.pi / 180
     
     def __call__(self, results):
+        results['img_pair'] = list()
+        results["lidar2cam_pair"], results["cam_intrinsic_pair"], results["lidar2img_pair"] = list(), list(), list()
         for idx, image in enumerate(results['img']):
             lidar2cam = results["lidar2cam"][idx].copy()
             lidar2img = results["lidar2img"][idx].copy()            
-         
             cam_intrinsic = results["cam_intrinsic"][idx].copy()
             image = results["img"][idx].copy()
+    
+            cam_intrinsic_rectify, image = self.reactify_ratio_params(image, cam_intrinsic)
+            lidar2cam_rectify, lidar2img_rectify, image = self.reactify_roll_params(image, lidar2cam, cam_intrinsic)
+            lidar2cam_rectify, lidar2img_rectify, image = self.reactify_pitch_params(image, lidar2cam_rectify, cam_intrinsic)                            
             
             if results["cache_sample"]:
-                cam_intrinsic, image = self.reactify_ratio_params(image, cam_intrinsic)
-                lidar2cam_rectify, lidar2img_rectify, image = self.reactify_roll_params(image, lidar2cam, cam_intrinsic)
-                lidar2cam_rectify, lidar2img_rectify, image = self.reactify_pitch_params(image, lidar2cam_rectify, cam_intrinsic)                        
+                results["lidar2cam_pair"].append(lidar2cam_rectify)
+                results["cam_intrinsic_pair"].append(cam_intrinsic_rectify)
+                results["lidar2img_pair"].append(lidar2img_rectify)
+                results["img_pair"].append(image)
             else:
-                lidar2cam_rectify, lidar2img_rectify = lidar2cam, lidar2img
-                
-            '''    
-            roll_check, pitch_check = self.parse_roll_pitch(lidar2cam_rectify)
-            
-            M = self.get_M(lidar2cam_roll_rectify[:3,:3], cam_intrinsic[:3,:3], lidar2cam_pitch_rectify[:3,:3], cam_intrinsic[:3,:3])
-            image = self.transform_with_M_bilinear(image, M)
-            
-            print(roll_init, pitch_init, roll_check, pitch_check)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            org = (300, 100)
-            org_1 = (300, 400)
-            fontScale = 3   
-            color = (0, 0, 255)
-            thickness = 2
-            image = cv2.putText(image, str(round(roll_check, 2)) +" " + str(round(pitch_check, 2)), org, font, 
-                    fontScale, color, thickness, cv2.LINE_AA)
-            image = cv2.putText(image, str(round(roll_init, 2)) +" " + str(round(pitch_init ,2)), org_1, font, 
-                    fontScale, color, thickness, cv2.LINE_AA)
-            if idx == 0:
-                cv2.imwrite("demo.jpg", image)
-            '''
-            results["lidar2cam"][idx] = lidar2cam_rectify
-            results["cam_intrinsic"][idx] = cam_intrinsic
-            results["lidar2img"][idx] = lidar2img_rectify
-            results["img"][idx] = image
-              
+                results["lidar2cam_pair"].append(lidar2cam)
+                results["cam_intrinsic_pair"].append(cam_intrinsic)
+                results["lidar2img_pair"].append(lidar2img)
+                results["img_pair"].append(results["img"][idx])
+
+                results["lidar2cam"][idx] = lidar2cam_rectify
+                results["cam_intrinsic"][idx] = cam_intrinsic_rectify
+                results["lidar2img"][idx] = lidar2img_rectify
+                results["img"][idx] = image
         return results
     
     def get_M(self, R, K, R_r, K_r):
@@ -687,3 +694,179 @@ class ImageReactify(object):
         image_new[mask] = [0,0,0]
         image_new = image_new.astype(np.float32)
         return image_new
+
+PIPELINES._module_dict.pop('DefaultFormatBundle')
+@PIPELINES.register_module()
+class DefaultFormatBundle(object):
+    """Default formatting bundle.
+
+    It simplifies the pipeline of formatting common fields, including "img",
+    "proposals", "gt_bboxes", "gt_labels", "gt_masks" and "gt_semantic_seg".
+    These fields are formatted as follows.
+
+    - img: (1)transpose, (2)to tensor, (3)to DataContainer (stack=True)
+    - proposals: (1)to tensor, (2)to DataContainer
+    - gt_bboxes: (1)to tensor, (2)to DataContainer
+    - gt_bboxes_ignore: (1)to tensor, (2)to DataContainer
+    - gt_labels: (1)to tensor, (2)to DataContainer
+    - gt_masks: (1)to tensor, (2)to DataContainer (cpu_only=True)
+    - gt_semantic_seg: (1)unsqueeze dim-0 (2)to tensor, \
+                       (3)to DataContainer (stack=True)
+    """
+
+    def __init__(self, ):
+        return
+
+    def __call__(self, results):
+        """Call function to transform and format common fields in results.
+
+        Args:
+            results (dict): Result dict contains the data to convert.
+
+        Returns:
+            dict: The result dict contains the data that is formatted with
+                default bundle.
+        """
+        if 'img' in results:
+            if isinstance(results['img'], list):
+                # process multiple imgs in single frame
+                imgs = [img.transpose(2, 0, 1) for img in results['img']]
+                imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
+                results['img'] = DC(to_tensor(imgs), stack=True)
+            else:
+                img = np.ascontiguousarray(results['img'].transpose(2, 0, 1))
+                results['img'] = DC(to_tensor(img), stack=True)
+        if 'img_pair' in results:
+            if isinstance(results['img_pair'], list):
+                # process multiple imgs in single frame
+                imgs_pair = [img.transpose(2, 0, 1) for img in results['img_pair']]
+                imgs_pair = np.ascontiguousarray(np.stack(imgs_pair, axis=0))
+                results['img_pair'] = DC(to_tensor(imgs_pair), stack=True)
+            else:
+                img_pair = np.ascontiguousarray(results['img_pair'].transpose(2, 0, 1))
+                results['img_pair'] = DC(to_tensor(img_pair), stack=True)
+        for key in [
+                'proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels',
+                'gt_labels_3d', 'attr_labels', 'pts_instance_mask',
+                'pts_semantic_mask', 'centers2d', 'depths'
+        ]:
+            if key not in results:
+                continue
+            if isinstance(results[key], list):
+                results[key] = DC([to_tensor(res) for res in results[key]])
+            else:
+                results[key] = DC(to_tensor(results[key]))
+        if 'gt_bboxes_3d' in results:
+            if isinstance(results['gt_bboxes_3d'], BaseInstance3DBoxes):
+                results['gt_bboxes_3d'] = DC(
+                    results['gt_bboxes_3d'], cpu_only=True)
+            else:
+                results['gt_bboxes_3d'] = DC(
+                    to_tensor(results['gt_bboxes_3d']))
+
+        if 'gt_masks' in results:
+            results['gt_masks'] = DC(results['gt_masks'], cpu_only=True)
+        if 'gt_semantic_seg' in results:
+            results['gt_semantic_seg'] = DC(
+                to_tensor(results['gt_semantic_seg'][None, ...]), stack=True)
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+PIPELINES._module_dict.pop('DefaultFormatBundle3D')
+@PIPELINES.register_module()
+class DefaultFormatBundle3D(DefaultFormatBundle):
+    """Default formatting bundle.
+
+    It simplifies the pipeline of formatting common fields for voxels,
+    including "proposals", "gt_bboxes", "gt_labels", "gt_masks" and
+    "gt_semantic_seg".
+    These fields are formatted as follows.
+
+    - img: (1)transpose, (2)to tensor, (3)to DataContainer (stack=True)
+    - proposals: (1)to tensor, (2)to DataContainer
+    - gt_bboxes: (1)to tensor, (2)to DataContainer
+    - gt_bboxes_ignore: (1)to tensor, (2)to DataContainer
+    - gt_labels: (1)to tensor, (2)to DataContainer
+    """
+
+    def __init__(self, class_names, with_gt=True, with_label=True):
+        super(DefaultFormatBundle3D, self).__init__()
+        self.class_names = class_names
+        self.with_gt = with_gt
+        self.with_label = with_label
+
+    def __call__(self, results):
+        """Call function to transform and format common fields in results.
+
+        Args:
+            results (dict): Result dict contains the data to convert.
+
+        Returns:
+            dict: The result dict contains the data that is formatted with
+                default bundle.
+        """
+        # Format 3D data
+        if 'points' in results:
+            assert isinstance(results['points'], BasePoints)
+            results['points'] = DC(results['points'].tensor)
+
+        for key in ['voxels', 'coors', 'voxel_centers', 'num_points']:
+            if key not in results:
+                continue
+            results[key] = DC(to_tensor(results[key]), stack=False)
+
+        if self.with_gt:
+            # Clean GT bboxes in the final
+            if 'gt_bboxes_3d_mask' in results:
+                gt_bboxes_3d_mask = results['gt_bboxes_3d_mask']
+                results['gt_bboxes_3d'] = results['gt_bboxes_3d'][
+                    gt_bboxes_3d_mask]
+                if 'gt_names_3d' in results:
+                    results['gt_names_3d'] = results['gt_names_3d'][
+                        gt_bboxes_3d_mask]
+                if 'centers2d' in results:
+                    results['centers2d'] = results['centers2d'][
+                        gt_bboxes_3d_mask]
+                if 'depths' in results:
+                    results['depths'] = results['depths'][gt_bboxes_3d_mask]
+            if 'gt_bboxes_mask' in results:
+                gt_bboxes_mask = results['gt_bboxes_mask']
+                if 'gt_bboxes' in results:
+                    results['gt_bboxes'] = results['gt_bboxes'][gt_bboxes_mask]
+                results['gt_names'] = results['gt_names'][gt_bboxes_mask]
+            if self.with_label:
+                if 'gt_names' in results and len(results['gt_names']) == 0:
+                    results['gt_labels'] = np.array([], dtype=np.int64)
+                    results['attr_labels'] = np.array([], dtype=np.int64)
+                elif 'gt_names' in results and isinstance(
+                        results['gt_names'][0], list):
+                    # gt_labels might be a list of list in multi-view setting
+                    results['gt_labels'] = [
+                        np.array([self.class_names.index(n) for n in res],
+                                 dtype=np.int64) for res in results['gt_names']
+                    ]
+                elif 'gt_names' in results:
+                    results['gt_labels'] = np.array([
+                        self.class_names.index(n) for n in results['gt_names']
+                    ],
+                                                    dtype=np.int64)
+                # we still assume one pipeline for one frame LiDAR
+                # thus, the 3D name is list[string]
+                if 'gt_names_3d' in results:
+                    results['gt_labels_3d'] = np.array([
+                        self.class_names.index(n)
+                        for n in results['gt_names_3d']
+                    ],
+                                                       dtype=np.int64)
+        results = super(DefaultFormatBundle3D, self).__call__(results)
+        return results
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        repr_str += f'(class_names={self.class_names}, '
+        repr_str += f'with_gt={self.with_gt}, with_label={self.with_label})'
+        return repr_str

@@ -196,6 +196,7 @@ class BEVFormer(MVXTwoStageDetector):
                       gt_labels=None,
                       gt_bboxes=None,
                       img=None,
+                      img_pair=None,
                       proposals=None,
                       gt_bboxes_ignore=None,
                       img_depth=None,
@@ -224,7 +225,71 @@ class BEVFormer(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-        
+        img, img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore = self.input_prepare(img, img_pair, img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore)
+        losses = self.forward_train_img(img, img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore)
+        return losses
+
+    def input_prepare(self, img, img_pair, img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore):
+        # img
+        img_total = []
+        for i in range(len(img)):
+            img_total.append(img[i])
+        for i in range(len(img_pair)):
+            img_total.append(img_pair[i])
+        img = torch.stack(img_total, dim=0)
+        # gt_bboxes_3d
+        gt_bboxes_3d_pair = copy.deepcopy(gt_bboxes_3d)
+        for i in range(len(gt_bboxes_3d_pair)):
+            gt_bboxes_3d.append(gt_bboxes_3d_pair[i])
+        # gt_labels_3d
+        gt_labels_3d_pair = copy.deepcopy(gt_labels_3d)
+        for i in range(len(gt_labels_3d_pair)):
+            gt_labels_3d.append(gt_labels_3d_pair[i])
+        # gt_bboxes_ignore
+        if gt_bboxes_ignore is not None:
+            gt_bboxes_ignore_pair = copy.deepcopy(gt_bboxes_ignore)
+            for i in range(len(gt_bboxes_ignore_pair)):
+                gt_bboxes_ignore.append(gt_bboxes_ignore_pair[i])
+        # img_metas
+        img_metas_pair = copy.deepcopy(img_metas)
+        for i in range(len(img_metas_pair)):
+            for key in img_metas_pair[i].keys():
+                img_metas_pair[i][key]["lidar2img"] = img_metas_pair[i][key]["lidar2img_pair"]
+        for i in range(len(img_metas_pair)):
+            img_metas.append(img_metas_pair[i])
+        return img, img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore
+
+    @auto_fp16(apply_to=('img', 'points'))
+    def forward_train_img(self,
+                          img=None,
+                          img_metas=None,
+                          gt_bboxes_3d=None,
+                          gt_labels_3d=None,
+                          gt_bboxes_ignore=None,
+                         ):
+        """Forward training function.
+        Args:
+            points (list[torch.Tensor], optional): Points of each sample.
+                Defaults to None.
+            img_metas (list[dict], optional): Meta information of each sample.
+                Defaults to None.
+            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
+                Ground truth 3D boxes. Defaults to None.
+            gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
+                of 3D boxes. Defaults to None.
+            gt_labels (list[torch.Tensor], optional): Ground truth labels
+                of 2D boxes in images. Defaults to None.
+            gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
+                images. Defaults to None.
+            img (torch.Tensor optional): Images of each sample with shape
+                (N, C, H, W). Defaults to None.
+            proposals ([list[torch.Tensor], optional): Predicted proposals
+                used for training Fast RCNN. Defaults to None.
+            gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
+                2D boxes in images to be ignored. Defaults to None.
+        Returns:
+            dict: Losses of different branches.
+        """
         len_queue = img.size(1)
         prev_img = img[:, :-1, ...]
         img = img[:, -1, ...]
@@ -240,7 +305,6 @@ class BEVFormer(MVXTwoStageDetector):
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore, prev_bev)
-
         losses.update(losses_pts)
         return losses
 

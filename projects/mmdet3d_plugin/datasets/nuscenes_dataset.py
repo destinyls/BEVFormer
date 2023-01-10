@@ -53,7 +53,7 @@ class CustomNuScenesDataset(NuScenesDataset):
             input_dict = self.get_data_info(i)
             if input_dict is None:
                 return None, None
-            input_dict['cache_sample'] = True if is_cache else False
+            input_dict['cache_sample'] = True if random.random() < 0.5 else False
             self.pre_pipeline(input_dict)
             example = self.pipeline(input_dict)
             if self.filter_empty_gt and \
@@ -62,9 +62,9 @@ class CustomNuScenesDataset(NuScenesDataset):
             queue.append(example)
         return self.union2one(queue), index_list
 
-
     def union2one(self, queue):
         imgs_list = [each['img'].data for each in queue]
+        imgs_pair_list = [each['img_pair'].data for each in queue]
         metas_map = {}
         prev_scene_token = None
         prev_pos = None
@@ -87,6 +87,7 @@ class CustomNuScenesDataset(NuScenesDataset):
                 prev_pos = copy.deepcopy(tmp_pos)
                 prev_angle = copy.deepcopy(tmp_angle)
         queue[-1]['img'] = DC(torch.stack(imgs_list), cpu_only=False, stack=True)
+        queue[-1]['img_pair'] = DC(torch.stack(imgs_pair_list), cpu_only=False, stack=True)
         queue[-1]['img_metas'] = DC(metas_map, cpu_only=True)
         queue = queue[-1]
         return queue
@@ -182,19 +183,14 @@ class CustomNuScenesDataset(NuScenesDataset):
         if self.test_mode:
             return self.prepare_test_data(idx)
         while True:
-            if self.cache_flag:
-                data, _ = self.prepare_train_data(self.cache_flag_index, self.cache_flag_index_list, True)
-                self.cache_flag = False
-                return data
-            else:
-                data, index_list = self.prepare_train_data(idx)                
-                if data is None:
-                    idx = self._rand_another(idx)
-                    continue
-                self.cache_flag = True
-                self.cache_flag_index = idx
-                self.cache_flag_index_list = index_list
-                return data
+            data, index_list = self.prepare_train_data(idx)                
+            if data is None:
+                idx = self._rand_another(idx)
+                continue
+            self.cache_flag = False
+            self.cache_flag_index = idx
+            self.cache_flag_index_list = index_list
+            return data
 
     def _evaluate_single(self,
                          result_path,

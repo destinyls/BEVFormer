@@ -46,10 +46,10 @@ class SelfTraining(nn.Module):
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
 
-    def forward(self, bev_embed, gt_bboxes_list, sample_idx): 
+    def forward(self, bev_embed, gt_bboxes_list, sample_idx=0): 
         bs = len(gt_bboxes_list)
         ids1 = np.arange(0, bs, 2)
-        ids2 = np.arange(1, bs + 1, 2)  
+        ids2 = np.arange(1, bs + 1, 2) 
         
         bev_embed = bev_embed.permute(1, 0, 2).contiguous()
         bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1)
@@ -57,11 +57,12 @@ class SelfTraining(nn.Module):
         
         bbox_mask = self.get_bbox_mask(gt_bboxes_list, resolution=0.2)
         
+        '''
         bbox_mask_demo = bbox_mask.astype(np.int32)[0] * 255
         bbox_mask_demo = bbox_mask_demo[:,:,np.newaxis]
         bbox_mask_demo = np.repeat(bbox_mask_demo, 3, axis=2)
         cv2.imwrite(os.path.join("bbox_mask_demo", str(sample_idx) + ".jpg"), bbox_mask_demo)
-        
+        '''
         bbox_mask = torch.from_numpy(bbox_mask).to(device=bev_embed.device)
         bbox_mask = bbox_mask.float()  # [B, H, W]
         x1, x2 = features1 * bbox_mask.unsqueeze(-1), features2 * bbox_mask.unsqueeze(-1)
